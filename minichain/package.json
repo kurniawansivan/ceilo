@@ -9,6 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "demo": "node src/demo.ts",
     "check": "biome check",
     "fix": "biome check --write",
     "typecheck": "tsc --noEmit",
