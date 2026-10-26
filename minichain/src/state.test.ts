@@ -1,23 +1,36 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { type Block, createBlock, createGenesisBlock } from "./block.ts";
+import {
+  type Block,
+  checkBlock,
+  computeTransactionsRoot,
+  createBlock,
+  hashBlockHeader,
+} from "./block.ts";
+import { encode } from "./encoding.ts";
 import { toHexadecimal } from "./hash.ts";
+import { computeMerkleRoot } from "./merkle.ts";
 import {
   applyBlock,
   applyTransaction,
   type ChainState,
+  computeStateRoot,
   computeTotalSupply,
+  createGenesis,
   createGenesisState,
   getAccount,
   MAXIMUM_VALUE,
   MINIMUM_FEE,
+  produceBlock,
   type TransactionRejection,
 } from "./state.ts";
 import {
   addressOfAccount,
+  createPlaceholderStateRoot,
   createSeededRandom,
   elementAt,
+  flipFirstBit,
   signTransfer,
   type TransferParameters,
 } from "./testing.ts";
@@ -32,10 +45,18 @@ const ALICE_BALANCE = 1_000n;
 const BOB_BALANCE = 500n;
 const INITIAL_SUPPLY = ALICE_BALANCE + BOB_BALANCE;
 
-const initialState = createGenesisState(CHAIN_IDENTIFIER, [
+const GENESIS_TIMESTAMP = 1_000n;
+const INITIAL_ALLOCATIONS = [
   { address: addressOfAccount(ALICE), balance: ALICE_BALANCE },
   { address: addressOfAccount(BOB), balance: BOB_BALANCE },
-]);
+];
+
+const genesis = createGenesis({
+  chainIdentifier: CHAIN_IDENTIFIER,
+  timestamp: GENESIS_TIMESTAMP,
+  allocations: INITIAL_ALLOCATIONS,
+});
+const initialState = genesis.state;
 
 /** Reads an account by the small integer of its private key. */
 const accountOf = (state: ChainState, accountNumber: number) =>
@@ -84,11 +105,32 @@ const createTestBlock = (
   beneficiaryNumber = CAROL,
 ): Block =>
   createBlock({
-    parentHeader: createGenesisBlock(1_000n).header,
+    parentHeader: genesis.block.header,
     transactions,
-    timestamp: 1_010n,
+    timestamp: GENESIS_TIMESTAMP + 10n,
+    beneficiary: addressOfAccount(beneficiaryNumber),
+    stateRoot: createPlaceholderStateRoot(),
+  });
+
+/** Produces a block from the initial state with its true state root, failing the test if a transaction is bad. */
+const produceTestBlock = (
+  transactions: readonly SignedTransaction[],
+  beneficiaryNumber = CAROL,
+): Block => {
+  const production = produceBlock({
+    parentState: initialState,
+    parentHeader: genesis.block.header,
+    transactions,
+    timestamp: GENESIS_TIMESTAMP + 10n,
     beneficiary: addressOfAccount(beneficiaryNumber),
   });
+  if (!production.valid) {
+    assert.fail(
+      `block could not be produced: ${production.reason} at ${production.transactionIndex}`,
+    );
+  }
+  return production.block;
+};
 
 /** Describes a plain transfer from Alice to Bob that is valid in the initial state. */
 const aliceToBob = (overrides: Partial<TransferParameters> = {}): TransferParameters => ({
@@ -419,7 +461,7 @@ describe("what is a caller's mistake or a bug, rather than a rejected transactio
 
 describe("applyBlock", () => {
   test("applies every transaction in order, paying all fees to the beneficiary", () => {
-    const block = createTestBlock([
+    const block = produceTestBlock([
       signTransfer(aliceToBob({ nonce: 0n, amount: 100n, fee: 3n })),
       signTransfer(aliceToBob({ nonce: 1n, amount: 50n, fee: 2n })),
       signTransfer({ from: BOB, to: ALICE, amount: 10n, fee: 1n, nonce: 0n }),
@@ -434,7 +476,7 @@ describe("applyBlock", () => {
   });
 
   test("lets a transaction spend what an earlier one in the same block delivered", () => {
-    const block = createTestBlock([
+    const block = produceTestBlock([
       signTransfer({ from: ALICE, to: DAVE, amount: 100n, fee: 1n, nonce: 0n }),
       signTransfer({ from: DAVE, to: BOB, amount: 60n, fee: 1n, nonce: 0n }),
     ]);
@@ -458,7 +500,7 @@ describe("applyBlock", () => {
   });
 
   test("accepts a block with no transactions and leaves the state as it was", () => {
-    const result = applyBlock(initialState, createTestBlock([]));
+    const result = applyBlock(initialState, produceTestBlock([]));
     assert.ok(result.valid);
     assert.equal(snapshotOf(result.state), snapshotOf(initialState));
   });
@@ -502,7 +544,7 @@ describe("applyBlock", () => {
   });
 
   test("lets the beneficiary spend fees it earned earlier in the same block", () => {
-    const block = createTestBlock([
+    const block = produceTestBlock([
       signTransfer(aliceToBob({ nonce: 0n, fee: 10n })),
       signTransfer({ from: CAROL, to: DAVE, amount: 4n, fee: 1n, nonce: 0n }),
     ]);
@@ -511,6 +553,228 @@ describe("applyBlock", () => {
     assert.ok(result.valid);
     assert.deepEqual(accountOf(result.state, DAVE), { balance: 4n, nonce: 0n });
     assert.deepEqual(accountOf(result.state, CAROL), { balance: 10n - 5n + 1n, nonce: 1n });
+  });
+});
+
+describe("computeStateRoot", () => {
+  /** Orders account numbers by the hexadecimal text of their address, the order leaves are sorted in. */
+  const byAddress = (left: number, right: number): number =>
+    toHexadecimal(addressOfAccount(left)).localeCompare(toHexadecimal(addressOfAccount(right)));
+
+  test("is the Merkle root of the chain identifier and the accounts sorted by address", () => {
+    const balances = new Map([
+      [ALICE, ALICE_BALANCE],
+      [BOB, BOB_BALANCE],
+    ]);
+    const accountLeaves = [ALICE, BOB]
+      .sort(byAddress)
+      .map((accountNumber) =>
+        encode([
+          "ceilo/account",
+          addressOfAccount(accountNumber),
+          balances.get(accountNumber) ?? 0n,
+          0n,
+        ]),
+      );
+
+    assert.deepEqual(
+      computeStateRoot(initialState),
+      computeMerkleRoot([encode(["ceilo/chain-identifier", CHAIN_IDENTIFIER]), ...accountLeaves]),
+    );
+  });
+
+  test("of a state with no accounts covers the chain identifier alone", () => {
+    assert.deepEqual(
+      computeStateRoot(createGenesisState(CHAIN_IDENTIFIER, [])),
+      computeMerkleRoot([encode(["ceilo/chain-identifier", CHAIN_IDENTIFIER])]),
+    );
+  });
+
+  test("does not depend on the order the allocations were listed in", () => {
+    const reversedState = createGenesisState(CHAIN_IDENTIFIER, [...INITIAL_ALLOCATIONS].reverse());
+    assert.deepEqual(computeStateRoot(reversedState), computeStateRoot(initialState));
+  });
+
+  test("changes with the chain identifier, a balance, a nonce or the set of accounts", () => {
+    const afterTransfer = applyAccepted(initialState, signTransfer(aliceToBob({ amount: 0n })));
+    const variants: Record<string, ChainState> = {
+      "chain identifier": createGenesisState(CHAIN_IDENTIFIER + 1n, INITIAL_ALLOCATIONS),
+      balance: createGenesisState(CHAIN_IDENTIFIER, [
+        { address: addressOfAccount(ALICE), balance: ALICE_BALANCE + 1n },
+        { address: addressOfAccount(BOB), balance: BOB_BALANCE },
+      ]),
+      "set of accounts": createGenesisState(CHAIN_IDENTIFIER, [
+        ...INITIAL_ALLOCATIONS,
+        { address: addressOfAccount(DAVE), balance: 1n },
+      ]),
+      "nonce and fee": afterTransfer,
+    };
+
+    const roots = new Set([toHexadecimal(computeStateRoot(initialState))]);
+    for (const [description, variant] of Object.entries(variants)) {
+      roots.add(toHexadecimal(computeStateRoot(variant)));
+      assert.notDeepEqual(computeStateRoot(variant), computeStateRoot(initialState), description);
+    }
+    assert.equal(roots.size, Object.keys(variants).length + 1);
+  });
+
+  test("is the same for independent transactions applied in either order", () => {
+    const aliceToDave = signTransfer({ from: ALICE, to: DAVE, amount: 5n, fee: 1n, nonce: 0n });
+    const bobToCarol = signTransfer({ from: BOB, to: CAROL, amount: 7n, fee: 1n, nonce: 0n });
+
+    const aliceFirst = applyAccepted(applyAccepted(initialState, aliceToDave), bobToCarol);
+    const bobFirst = applyAccepted(applyAccepted(initialState, bobToCarol), aliceToDave);
+    assert.deepEqual(computeStateRoot(aliceFirst), computeStateRoot(bobFirst));
+  });
+});
+
+describe("createGenesis", () => {
+  test("returns the genesis state and a block whose header commits to it", () => {
+    assert.equal(
+      snapshotOf(genesis.state),
+      snapshotOf(createGenesisState(CHAIN_IDENTIFIER, INITIAL_ALLOCATIONS)),
+    );
+    assert.deepEqual(genesis.block.header.stateRoot, computeStateRoot(genesis.state));
+    assert.equal(genesis.block.header.height, 0n);
+    assert.equal(genesis.block.header.timestamp, GENESIS_TIMESTAMP);
+    assert.deepEqual(genesis.block.transactions, []);
+  });
+
+  test("gives a genesis hash that depends on the allocations and the chain identifier", () => {
+    const genesisHashOf = (chainIdentifier: bigint, aliceBalance: bigint) =>
+      hashBlockHeader(
+        createGenesis({
+          chainIdentifier,
+          timestamp: GENESIS_TIMESTAMP,
+          allocations: [{ address: addressOfAccount(ALICE), balance: aliceBalance }],
+        }).block.header,
+      );
+
+    assert.deepEqual(genesisHashOf(CHAIN_IDENTIFIER, 100n), genesisHashOf(CHAIN_IDENTIFIER, 100n));
+    assert.notDeepEqual(
+      genesisHashOf(CHAIN_IDENTIFIER, 100n),
+      genesisHashOf(CHAIN_IDENTIFIER, 101n),
+    );
+    assert.notDeepEqual(
+      genesisHashOf(CHAIN_IDENTIFIER, 100n),
+      genesisHashOf(CHAIN_IDENTIFIER + 1n, 100n),
+    );
+  });
+});
+
+describe("produceBlock", () => {
+  const transactions = [
+    signTransfer(aliceToBob({ nonce: 0n })),
+    signTransfer(aliceToBob({ nonce: 1n })),
+  ];
+
+  test("builds a block that links to its parent and commits to the resulting state", () => {
+    const production = produceBlock({
+      parentState: initialState,
+      parentHeader: genesis.block.header,
+      transactions,
+      timestamp: GENESIS_TIMESTAMP + 10n,
+      beneficiary: addressOfAccount(CAROL),
+    });
+    assert.ok(production.valid);
+
+    const { header } = production.block;
+    assert.equal(header.height, 1n);
+    assert.deepEqual(header.previousBlockHash, hashBlockHeader(genesis.block.header));
+    assert.deepEqual(header.transactionsRoot, computeTransactionsRoot(transactions));
+    assert.deepEqual(header.stateRoot, computeStateRoot(production.state));
+    assert.equal(header.timestamp, GENESIS_TIMESTAMP + 10n);
+    assert.deepEqual(header.beneficiary, addressOfAccount(CAROL));
+  });
+
+  test("builds a block that checkBlock and applyBlock both accept, reaching the same state", () => {
+    const block = produceTestBlock(transactions);
+    const production = produceBlock({
+      parentState: initialState,
+      parentHeader: genesis.block.header,
+      transactions,
+      timestamp: GENESIS_TIMESTAMP + 10n,
+      beneficiary: addressOfAccount(CAROL),
+    });
+    assert.ok(production.valid);
+
+    assert.deepEqual(checkBlock(block, genesis.block.header), { valid: true });
+    const applied = applyBlock(initialState, block);
+    assert.ok(applied.valid);
+    assert.deepEqual(computeStateRoot(applied.state), computeStateRoot(production.state));
+  });
+
+  test("names the bad transaction instead of building a block", () => {
+    const production = produceBlock({
+      parentState: initialState,
+      parentHeader: genesis.block.header,
+      transactions: [signTransfer(aliceToBob()), signTransfer(aliceToBob({ nonce: 9n }))],
+      timestamp: GENESIS_TIMESTAMP + 10n,
+      beneficiary: addressOfAccount(CAROL),
+    });
+    assert.deepEqual(production, { valid: false, transactionIndex: 1, reason: "nonce-mismatch" });
+  });
+
+  test("throws when the parent state is not the state its header commits to", () => {
+    const otherState = createGenesisState(CHAIN_IDENTIFIER, [
+      { address: addressOfAccount(ALICE), balance: ALICE_BALANCE + 1n },
+    ]);
+    assert.throws(
+      () =>
+        produceBlock({
+          parentState: otherState,
+          parentHeader: genesis.block.header,
+          transactions,
+          timestamp: GENESIS_TIMESTAMP + 10n,
+          beneficiary: addressOfAccount(CAROL),
+        }),
+      RangeError,
+    );
+  });
+
+  test("leaves the parent state untouched", () => {
+    const snapshotBefore = snapshotOf(initialState);
+    produceTestBlock(transactions);
+    assert.equal(snapshotOf(initialState), snapshotBefore);
+  });
+});
+
+describe("applyBlock checks the state root", () => {
+  test("rejects a block whose state root is not the root of the state it produces", () => {
+    const block = produceTestBlock([signTransfer(aliceToBob())]);
+    const forgedBlock = {
+      ...block,
+      header: { ...block.header, stateRoot: flipFirstBit(block.header.stateRoot) },
+    };
+    const snapshotBefore = snapshotOf(initialState);
+
+    assert.deepEqual(applyBlock(initialState, forgedBlock), {
+      valid: false,
+      reason: "state-root-mismatch",
+    });
+    assert.equal(snapshotOf(initialState), snapshotBefore);
+  });
+
+  test("rejects a block whose beneficiary differs from the one its root was computed for", () => {
+    const block = produceTestBlock([signTransfer(aliceToBob())], CAROL);
+    const redirectedBlock = {
+      ...block,
+      header: { ...block.header, beneficiary: addressOfAccount(DAVE) },
+    };
+
+    assert.deepEqual(applyBlock(initialState, redirectedBlock), {
+      valid: false,
+      reason: "state-root-mismatch",
+    });
+  });
+
+  test("reports a bad transaction before a wrong state root", () => {
+    const block = createTestBlock([signTransfer(aliceToBob({ nonce: 9n }))]);
+    assert.deepEqual(applyBlock(initialState, block), {
+      valid: false,
+      transactionIndex: 0,
+      reason: "nonce-mismatch",
+    });
   });
 });
 
@@ -653,6 +917,7 @@ describe("invariants under random transactions", () => {
     const random = createSeededRandom(20_261_027);
     let model = createInitialModel();
     let state = initialState;
+    let tipHeader = genesis.block.header;
     let acceptedBlocks = 0;
     let rejectedBlocks = 0;
 
@@ -674,7 +939,23 @@ describe("invariants under random transactions", () => {
       }
 
       const snapshotBefore = snapshotOf(state);
-      const result = applyBlock(state, createTestBlock(transactions, beneficiary));
+      let block: Block;
+      if (expectedFailure === undefined) {
+        const production = produceBlock({
+          parentState: state,
+          parentHeader: tipHeader,
+          transactions,
+          timestamp: tipHeader.timestamp + 10n,
+          beneficiary: addressOfAccount(beneficiary),
+        });
+        if (!production.valid) {
+          assert.fail(`block ${blockNumber} could not be produced: ${production.reason}`);
+        }
+        block = production.block;
+      } else {
+        block = createTestBlock(transactions, beneficiary);
+      }
+      const result = applyBlock(state, block);
 
       if (expectedFailure === undefined) {
         if (!result.valid) {
@@ -682,6 +963,7 @@ describe("invariants under random transactions", () => {
         }
         model = trialModel;
         state = result.state;
+        tipHeader = block.header;
         acceptedBlocks++;
       } else {
         assert.deepEqual(

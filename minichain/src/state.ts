@@ -1,7 +1,14 @@
-import type { Block } from "./block.ts";
-import { toHexadecimal } from "./hash.ts";
+import { equalBytes } from "@noble/curves/utils.js";
+
+import { type Block, type BlockHeader, createBlock, createGenesisBlock } from "./block.ts";
+import { encode } from "./encoding.ts";
+import { fromHexadecimal, type Hash, toHexadecimal } from "./hash.ts";
 import { ADDRESS_LENGTH, type Address } from "./keys.ts";
+import { computeMerkleRoot } from "./merkle.ts";
 import { recoverSender, type SignedTransaction } from "./transaction.ts";
+
+const CHAIN_LEAF_DOMAIN = "ceilo/chain-identifier";
+const ACCOUNT_LEAF_DOMAIN = "ceilo/account";
 
 /** The largest value a balance, amount, fee, nonce or chain identifier may hold: 2^256 - 1. */
 export const MAXIMUM_VALUE = 2n ** 256n - 1n;
@@ -42,14 +49,50 @@ export type TransactionApplication =
   | { readonly valid: true; readonly state: ChainState }
   | { readonly valid: false; readonly reason: TransactionRejection };
 
-/** The outcome of applying a block: the new state, or the first bad transaction and its reason. */
-export type BlockApplication =
+/** Transactions applied in order to a state: the new state, or the first bad transaction. */
+export type TransactionsApplication =
   | { readonly valid: true; readonly state: ChainState }
   | {
       readonly valid: false;
       readonly transactionIndex: number;
       readonly reason: TransactionRejection;
     };
+
+/** The outcome of applying a block: the new state, a bad transaction, or a wrong state root. */
+export type BlockApplication =
+  | TransactionsApplication
+  | { readonly valid: false; readonly reason: "state-root-mismatch" };
+
+/** Everything needed to produce the next block from the state that its parent left. */
+export type BlockProductionRequest = {
+  readonly parentState: ChainState;
+  readonly parentHeader: BlockHeader;
+  readonly transactions: readonly SignedTransaction[];
+  readonly timestamp: bigint;
+  readonly beneficiary: Address;
+};
+
+/** The outcome of producing a block: the block with the state it leaves, or the first bad transaction. */
+export type BlockProduction =
+  | { readonly valid: true; readonly block: Block; readonly state: ChainState }
+  | {
+      readonly valid: false;
+      readonly transactionIndex: number;
+      readonly reason: TransactionRejection;
+    };
+
+/** Everything that defines a chain from its first moment. */
+export type GenesisParameters = {
+  readonly chainIdentifier: bigint;
+  readonly timestamp: bigint;
+  readonly allocations: readonly GenesisAllocation[];
+};
+
+/** The genesis block together with the state it commits to. */
+export type Genesis = {
+  readonly block: Block;
+  readonly state: ChainState;
+};
 
 const EMPTY_ACCOUNT: Account = { balance: 0n, nonce: 0n };
 
@@ -215,16 +258,70 @@ export function applyTransaction(
   return { valid: true, state: { chainIdentifier: state.chainIdentifier, accounts } };
 }
 
-/** Applies a block's transactions in order to a copy of the state, all or none. */
-export function applyBlock(state: ChainState, block: Block): BlockApplication {
-  const { beneficiary } = block.header;
+/** Applies transactions in order to a copy of the state, all or none, paying fees to the beneficiary. */
+function applyTransactions(
+  state: ChainState,
+  transactions: readonly SignedTransaction[],
+  beneficiary: Address,
+): TransactionsApplication {
   assertAddressLength(beneficiary, "beneficiary");
   const accounts = new Map(state.accounts);
-  for (const [transactionIndex, transaction] of block.transactions.entries()) {
+  for (const [transactionIndex, transaction] of transactions.entries()) {
     const reason = applyToAccounts(accounts, state.chainIdentifier, transaction, beneficiary);
     if (reason !== undefined) {
       return { valid: false, transactionIndex, reason };
     }
   }
   return { valid: true, state: { chainIdentifier: state.chainIdentifier, accounts } };
+}
+
+/** Computes the Merkle root over the chain identifier and every account, sorted by address. */
+export function computeStateRoot(state: ChainState): Hash {
+  const accountLeaves = [...state.accounts.entries()]
+    .sort(([leftKey], [rightKey]) => (leftKey < rightKey ? -1 : 1))
+    .map(([key, account]) =>
+      encode([ACCOUNT_LEAF_DOMAIN, fromHexadecimal(key), account.balance, account.nonce]),
+    );
+  return computeMerkleRoot([encode([CHAIN_LEAF_DOMAIN, state.chainIdentifier]), ...accountLeaves]);
+}
+
+/** Creates the genesis state and a genesis block whose header commits to it, allocations included. */
+export function createGenesis(parameters: GenesisParameters): Genesis {
+  const state = createGenesisState(parameters.chainIdentifier, parameters.allocations);
+  const block = createGenesisBlock({
+    timestamp: parameters.timestamp,
+    stateRoot: computeStateRoot(state),
+  });
+  return { block, state };
+}
+
+/** Applies a block to a copy of the state, all or none, and checks the root it claims for the result. */
+export function applyBlock(state: ChainState, block: Block): BlockApplication {
+  const applied = applyTransactions(state, block.transactions, block.header.beneficiary);
+  if (!applied.valid) {
+    return applied;
+  }
+  if (!equalBytes(computeStateRoot(applied.state), block.header.stateRoot)) {
+    return { valid: false, reason: "state-root-mismatch" };
+  }
+  return applied;
+}
+
+/** Builds the next block from its parent's state, committing to the state its transactions leave. */
+export function produceBlock(request: BlockProductionRequest): BlockProduction {
+  if (!equalBytes(computeStateRoot(request.parentState), request.parentHeader.stateRoot)) {
+    throw new RangeError("parent state does not match the state root of the parent header");
+  }
+  const applied = applyTransactions(request.parentState, request.transactions, request.beneficiary);
+  if (!applied.valid) {
+    return applied;
+  }
+  const block = createBlock({
+    parentHeader: request.parentHeader,
+    transactions: request.transactions,
+    timestamp: request.timestamp,
+    beneficiary: request.beneficiary,
+    stateRoot: computeStateRoot(applied.state),
+  });
+  return { valid: true, block, state: applied.state };
 }

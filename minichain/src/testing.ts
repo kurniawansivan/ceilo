@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { type Block, createGenesisBlock } from "./block.ts";
 import type { Hash } from "./hash.ts";
 import { type Address, deriveAddress, derivePublicKey } from "./keys.ts";
 import { type SignedTransaction, signTransaction } from "./transaction.ts";
@@ -23,6 +24,16 @@ export function createSignedTransactionWithNonce(nonce: bigint): SignedTransacti
     },
     privateKeyWithValue(1),
   );
+}
+
+/** Returns 32 bytes that stand in for a state root in tests that only look at block structure. */
+export function createPlaceholderStateRoot(): Hash {
+  return new Uint8Array(32).fill(0xab);
+}
+
+/** Builds a genesis block with a placeholder state root, for tests of block structure. */
+export function createStructuralGenesisBlock(timestamp: bigint): Block {
+  return createGenesisBlock({ timestamp, stateRoot: createPlaceholderStateRoot() });
 }
 
 /** Derives the address of the account whose private key is a small integer. */

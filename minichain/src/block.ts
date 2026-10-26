@@ -7,11 +7,13 @@ import { hashSignedTransaction, type SignedTransaction } from "./transaction.ts"
 
 const BLOCK_HEADER_DOMAIN = "ceilo/block-header";
 
-/** Where a block sits, what it links to, what it contains and who earns its fees. */
+/** Where a block sits, what it links to, what it contains, the state it leaves and who earns its fees. */
 export type BlockHeader = {
   readonly height: bigint;
   readonly previousBlockHash: Hash;
   readonly transactionsRoot: Hash;
+  /** Merkle root of the whole chain state after this block's transactions. */
+  readonly stateRoot: Hash;
   /** Seconds since the Unix epoch. */
   readonly timestamp: bigint;
   readonly beneficiary: Address;
@@ -43,6 +45,13 @@ export type NewBlockParameters = {
   readonly transactions: readonly SignedTransaction[];
   readonly timestamp: bigint;
   readonly beneficiary: Address;
+  readonly stateRoot: Hash;
+};
+
+/** Everything needed to build the first block of a chain. */
+export type GenesisBlockParameters = {
+  readonly timestamp: bigint;
+  readonly stateRoot: Hash;
 };
 
 /** Runs a computation, returning undefined when it rejects its input with a RangeError or TypeError. */
@@ -73,12 +82,14 @@ function assertByteLength(bytes: Uint8Array, expectedLength: number, name: strin
 export function hashBlockHeader(header: BlockHeader): Hash {
   assertByteLength(header.previousBlockHash, HASH_LENGTH, "previous block hash");
   assertByteLength(header.transactionsRoot, HASH_LENGTH, "transactions root");
+  assertByteLength(header.stateRoot, HASH_LENGTH, "state root");
   assertByteLength(header.beneficiary, ADDRESS_LENGTH, "beneficiary");
   return hashOf([
     BLOCK_HEADER_DOMAIN,
     header.height,
     header.previousBlockHash,
     header.transactionsRoot,
+    header.stateRoot,
     header.timestamp,
     header.beneficiary,
   ]);
@@ -94,27 +105,29 @@ export function computeTransactionsRoot(transactions: readonly SignedTransaction
   return computeMerkleRoot(transactions.map((transaction) => hashSignedTransaction(transaction)));
 }
 
-/** Creates the first block: height 0, no parent, no transactions and no beneficiary. */
-export function createGenesisBlock(timestamp: bigint): Block {
+/** Creates the first block: height 0, no parent, no transactions, no beneficiary and its state root. */
+export function createGenesisBlock(parameters: GenesisBlockParameters): Block {
   return {
     header: {
       height: 0n,
       previousBlockHash: new Uint8Array(HASH_LENGTH),
       transactionsRoot: computeTransactionsRoot([]),
-      timestamp,
+      stateRoot: parameters.stateRoot,
+      timestamp: parameters.timestamp,
       beneficiary: new Uint8Array(ADDRESS_LENGTH),
     },
     transactions: [],
   };
 }
 
-/** Creates the next block, linked to its parent and committing to its transactions. */
+/** Creates the next block, linked to its parent and committing to its transactions and state. */
 export function createBlock(parameters: NewBlockParameters): Block {
   return {
     header: {
       height: parameters.parentHeader.height + 1n,
       previousBlockHash: hashBlockHeader(parameters.parentHeader),
       transactionsRoot: computeTransactionsRoot(parameters.transactions),
+      stateRoot: parameters.stateRoot,
       timestamp: parameters.timestamp,
       beneficiary: parameters.beneficiary,
     },

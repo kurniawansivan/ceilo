@@ -1,15 +1,26 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { type Block, createBlock, createGenesisBlock, hashBlockHeader } from "./block.ts";
-import { checkChain } from "./chain.ts";
+import { type Block, createBlock, hashBlockHeader } from "./block.ts";
+import { checkChain, replayChain } from "./chain.ts";
 import type { Hash } from "./hash.ts";
 import { deriveAddress, derivePublicKey } from "./keys.ts";
 import {
+  type ChainState,
+  computeStateRoot,
+  createGenesis,
+  createGenesisState,
+  produceBlock,
+} from "./state.ts";
+import {
+  addressOfAccount,
+  createPlaceholderStateRoot,
   createSignedTransactionWithNonce,
+  createStructuralGenesisBlock,
   elementAt,
   flipFirstBit,
   privateKeyWithValue,
+  signTransfer,
 } from "./testing.ts";
 
 const GENESIS_TIMESTAMP = 1_000n;
@@ -19,7 +30,7 @@ const beneficiaryAddress = deriveAddress(derivePublicKey(privateKeyWithValue(3))
 
 /** Builds a valid chain: a genesis block, then blocks that each carry two transactions. */
 const buildChain = (blockCount: number, genesisTimestamp = GENESIS_TIMESTAMP): Block[] => {
-  const chain: Block[] = [createGenesisBlock(genesisTimestamp)];
+  const chain: Block[] = [createStructuralGenesisBlock(genesisTimestamp)];
   for (let blockIndex = 1; blockIndex < blockCount; blockIndex++) {
     const parent = elementAt(chain, blockIndex - 1);
     const firstNonce = BigInt(blockIndex - 1) * TRANSACTIONS_PER_BLOCK;
@@ -32,6 +43,7 @@ const buildChain = (blockCount: number, genesisTimestamp = GENESIS_TIMESTAMP): B
         ],
         timestamp: parent.header.timestamp + BLOCK_INTERVAL_IN_SECONDS,
         beneficiary: beneficiaryAddress,
+        stateRoot: createPlaceholderStateRoot(),
       }),
     );
   }
@@ -57,6 +69,7 @@ const relinkFrom = (chain: readonly Block[], startIndex: number, startBlock: Blo
         transactions: original.transactions,
         timestamp: original.header.timestamp,
         beneficiary: original.header.beneficiary,
+        stateRoot: original.header.stateRoot,
       }),
     );
   }
@@ -76,6 +89,7 @@ const rewriteBlockConsistently = (chain: readonly Block[], blockIndex: number): 
     ],
     timestamp: original.header.timestamp,
     beneficiary: original.header.beneficiary,
+    stateRoot: original.header.stateRoot,
   });
 };
 
@@ -275,5 +289,203 @@ describe("what hash links alone cannot stop", () => {
         );
       }
     }
+  });
+});
+
+const CHAIN_IDENTIFIER = 1337n;
+const SENDER = 1;
+const RECEIVER = 2;
+const FEE_COLLECTOR = 3;
+const OTHER_ACCOUNT = 4;
+const ALLOCATED_BALANCE = 1_000n;
+const TRANSFER_AMOUNT = 10n;
+
+/** A chain built from real state, with the genesis state it starts from and the state it ends in. */
+type RealChain = {
+  readonly chain: Block[];
+  readonly genesisState: ChainState;
+  readonly finalState: ChainState;
+};
+
+/** Signs two consecutive transfers from the sender to the receiver. */
+const createTransfers = (firstNonce: bigint, amount: bigint) => [
+  signTransfer({ from: SENDER, to: RECEIVER, amount, fee: 1n, nonce: firstNonce }),
+  signTransfer({ from: SENDER, to: RECEIVER, amount, fee: 1n, nonce: firstNonce + 1n }),
+];
+
+/** Builds a real chain by producing each block from the state before it, optionally changing one amount. */
+const buildRealChain = (
+  blockCount: number,
+  amountChange?: { readonly blockIndex: number; readonly amount: bigint },
+): RealChain => {
+  const genesis = createGenesis({
+    chainIdentifier: CHAIN_IDENTIFIER,
+    timestamp: GENESIS_TIMESTAMP,
+    allocations: [{ address: addressOfAccount(SENDER), balance: ALLOCATED_BALANCE }],
+  });
+  const chain: Block[] = [genesis.block];
+  let state = genesis.state;
+
+  for (let blockIndex = 1; blockIndex < blockCount; blockIndex++) {
+    const parent = elementAt(chain, blockIndex - 1);
+    const amount = amountChange?.blockIndex === blockIndex ? amountChange.amount : TRANSFER_AMOUNT;
+    const production = produceBlock({
+      parentState: state,
+      parentHeader: parent.header,
+      transactions: createTransfers(BigInt(blockIndex - 1) * 2n, amount),
+      timestamp: parent.header.timestamp + BLOCK_INTERVAL_IN_SECONDS,
+      beneficiary: addressOfAccount(FEE_COLLECTOR),
+    });
+    if (!production.valid) {
+      assert.fail(`block ${blockIndex} could not be produced: ${production.reason}`);
+    }
+    chain.push(production.block);
+    state = production.state;
+  }
+  return { chain, genesisState: genesis.state, finalState: state };
+};
+
+describe("replayChain accepts", () => {
+  test("a chain of only the genesis block", () => {
+    const { chain, genesisState } = buildRealChain(1);
+    const result = replayChain(chain, genesisHashOf(chain), genesisState);
+
+    assert.ok(result.valid);
+    assert.deepEqual(computeStateRoot(result.state), computeStateRoot(genesisState));
+  });
+
+  test("a real chain, ending in exactly the state its last block committed to", () => {
+    const { chain, genesisState, finalState } = buildRealChain(6);
+    const result = replayChain(chain, genesisHashOf(chain), genesisState);
+
+    assert.ok(result.valid);
+    assert.deepEqual(computeStateRoot(result.state), computeStateRoot(finalState));
+    assert.deepEqual(computeStateRoot(result.state), elementAt(chain, 5).header.stateRoot);
+  });
+});
+
+describe("replayChain rejects", () => {
+  test("a chain with the wrong genesis hash, as checkChain does", () => {
+    const { chain, genesisState } = buildRealChain(4);
+    assert.deepEqual(replayChain(chain, flipFirstBit(genesisHashOf(chain)), genesisState), {
+      valid: false,
+      blockIndex: 0,
+      reason: "genesis-hash-mismatch",
+    });
+  });
+
+  test("a structural fault, as checkChain does: a transaction altered inside a block", () => {
+    const { chain, genesisState } = buildRealChain(6);
+    const block = elementAt(chain, 3);
+    const [firstTransaction, ...otherTransactions] = block.transactions;
+    assert.ok(firstTransaction);
+    const alteredBlock = {
+      ...block,
+      transactions: [
+        { ...firstTransaction, amount: firstTransaction.amount + 1n },
+        ...otherTransactions,
+      ],
+    };
+
+    assert.deepEqual(
+      replayChain(replaceBlockAt(chain, 3, alteredBlock), genesisHashOf(chain), genesisState),
+      { valid: false, blockIndex: 3, reason: "transactions-root-mismatch" },
+    );
+  });
+
+  test("a genesis state that is not the one the genesis block commits to", () => {
+    const { chain } = buildRealChain(4);
+    const richerGenesisState = createGenesisState(CHAIN_IDENTIFIER, [
+      { address: addressOfAccount(SENDER), balance: ALLOCATED_BALANCE + 1n },
+    ]);
+
+    assert.deepEqual(replayChain(chain, genesisHashOf(chain), richerGenesisState), {
+      valid: false,
+      blockIndex: 0,
+      reason: "state-root-mismatch",
+    });
+  });
+
+  test("a forged state root that is re-linked so the structure still holds", () => {
+    const { chain, genesisState } = buildRealChain(6);
+    const original = elementAt(chain, 2);
+    const forgedBlock = createBlock({
+      parentHeader: elementAt(chain, 1).header,
+      transactions: original.transactions,
+      timestamp: original.header.timestamp,
+      beneficiary: original.header.beneficiary,
+      stateRoot: flipFirstBit(original.header.stateRoot),
+    });
+    const forgedChain = relinkFrom(chain, 2, forgedBlock);
+
+    assert.deepEqual(checkChain(forgedChain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(replayChain(forgedChain, genesisHashOf(chain), genesisState), {
+      valid: false,
+      blockIndex: 2,
+      reason: "state-root-mismatch",
+    });
+  });
+
+  test("a changed beneficiary, because the fees then land in a different account", () => {
+    const { chain, genesisState } = buildRealChain(6);
+    const original = elementAt(chain, 4);
+    const redirectedBlock = createBlock({
+      parentHeader: elementAt(chain, 3).header,
+      transactions: original.transactions,
+      timestamp: original.header.timestamp,
+      beneficiary: addressOfAccount(OTHER_ACCOUNT),
+      stateRoot: original.header.stateRoot,
+    });
+    const redirectedChain = relinkFrom(chain, 4, redirectedBlock);
+
+    assert.deepEqual(checkChain(redirectedChain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(replayChain(redirectedChain, genesisHashOf(chain), genesisState), {
+      valid: false,
+      blockIndex: 4,
+      reason: "state-root-mismatch",
+    });
+  });
+
+  test("a block whose transaction the state cannot afford, though its structure is sound", () => {
+    const { chain, genesisState } = buildRealChain(3);
+    const overspendingBlock = createBlock({
+      parentHeader: elementAt(chain, 2).header,
+      transactions: [
+        signTransfer({ from: SENDER, to: RECEIVER, amount: 10_000n, fee: 1n, nonce: 4n }),
+      ],
+      timestamp: elementAt(chain, 2).header.timestamp + BLOCK_INTERVAL_IN_SECONDS,
+      beneficiary: addressOfAccount(FEE_COLLECTOR),
+      stateRoot: createPlaceholderStateRoot(),
+    });
+    const longerChain = [...chain, overspendingBlock];
+
+    assert.deepEqual(checkChain(longerChain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(replayChain(longerChain, genesisHashOf(chain), genesisState), {
+      valid: false,
+      blockIndex: 3,
+      reason: "insufficient-balance",
+    });
+  });
+});
+
+describe("what replaying cannot stop", () => {
+  test("an alternative history that is consistent all the way is just as valid", () => {
+    const original = buildRealChain(6);
+    const alternative = buildRealChain(6, { blockIndex: 2, amount: TRANSFER_AMOUNT + 1n });
+    const result = replayChain(
+      alternative.chain,
+      genesisHashOf(original.chain),
+      alternative.genesisState,
+    );
+
+    assert.ok(result.valid);
+    assert.notDeepEqual(
+      hashBlockHeader(elementAt(alternative.chain, 5).header),
+      hashBlockHeader(elementAt(original.chain, 5).header),
+    );
+    assert.notDeepEqual(
+      computeStateRoot(alternative.finalState),
+      computeStateRoot(original.finalState),
+    );
   });
 });

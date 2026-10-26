@@ -8,9 +8,22 @@ import {
   tryHashBlockHeader,
 } from "./block.ts";
 import type { Hash } from "./hash.ts";
+import { applyBlock, type ChainState, type TransactionRejection } from "./state.ts";
 
 /** Why a chain was rejected: any block rule, or one of the two rules about the chain as a whole. */
 export type ChainInvalidReason = BlockInvalidReason | "empty-chain" | "genesis-hash-mismatch";
+
+/** Why a replay failed: a structural fault, a bad transaction, or a state root that is not the result. */
+export type ChainReplayReason = ChainInvalidReason | TransactionRejection | "state-root-mismatch";
+
+/** The outcome of replaying a chain: the state it ends in, or the first bad block and why. */
+export type ChainReplay =
+  | { readonly valid: true; readonly state: ChainState }
+  | {
+      readonly valid: false;
+      readonly blockIndex: number;
+      readonly reason: ChainReplayReason;
+    };
 
 /** The outcome of checking a chain: valid, or the first bad block and the reason it was rejected. */
 export type ChainCheck =
@@ -54,4 +67,26 @@ export function checkChain(chain: readonly Block[], expectedGenesisHash: Hash): 
     parentHeader = block.header;
   }
   return { valid: true };
+}
+
+/** Checks a chain's structure, then replays every block, genesis included, checking each state root. */
+export function replayChain(
+  chain: readonly Block[],
+  expectedGenesisHash: Hash,
+  genesisState: ChainState,
+): ChainReplay {
+  const structure = checkChain(chain, expectedGenesisHash);
+  if (!structure.valid) {
+    return structure;
+  }
+
+  let state = genesisState;
+  for (const [blockIndex, block] of chain.entries()) {
+    const applied = applyBlock(state, block);
+    if (!applied.valid) {
+      return { valid: false, blockIndex, reason: applied.reason };
+    }
+    state = applied.state;
+  }
+  return { valid: true, state };
 }

@@ -14,7 +14,9 @@ import { hashOf } from "./hash.ts";
 import { deriveAddress, derivePublicKey } from "./keys.ts";
 import { computeMerkleRoot, createMerkleProof, verifyMerkleProof } from "./merkle.ts";
 import {
+  createPlaceholderStateRoot,
   createSignedTransactionWithNonce,
+  createStructuralGenesisBlock,
   elementAt,
   flipFirstBit,
   privateKeyWithValue,
@@ -23,7 +25,7 @@ import { hashSignedTransaction, type SignedTransaction } from "./transaction.ts"
 
 const GENESIS_TIMESTAMP = 1_000n;
 const beneficiaryAddress = deriveAddress(derivePublicKey(privateKeyWithValue(3)));
-const genesisBlock = createGenesisBlock(GENESIS_TIMESTAMP);
+const genesisBlock = createStructuralGenesisBlock(GENESIS_TIMESTAMP);
 const signedTransactions = [0n, 1n, 2n].map(createSignedTransactionWithNonce);
 
 /** Builds a valid child of the genesis block carrying three transactions. */
@@ -33,6 +35,7 @@ const createValidChild = (): Block =>
     transactions: signedTransactions,
     timestamp: GENESIS_TIMESTAMP + 10n,
     beneficiary: beneficiaryAddress,
+    stateRoot: createPlaceholderStateRoot(),
   });
 
 /** Returns the block with its header partly replaced and everything else untouched. */
@@ -58,6 +61,7 @@ describe("hashBlockHeader", () => {
         header.height,
         header.previousBlockHash,
         header.transactionsRoot,
+        header.stateRoot,
         header.timestamp,
         header.beneficiary,
       ]),
@@ -68,6 +72,7 @@ describe("hashBlockHeader", () => {
     height: { ...header, height: header.height + 1n },
     "previous block hash": { ...header, previousBlockHash: flipFirstBit(header.previousBlockHash) },
     "transactions root": { ...header, transactionsRoot: flipFirstBit(header.transactionsRoot) },
+    "state root": { ...header, stateRoot: flipFirstBit(header.stateRoot) },
     timestamp: { ...header, timestamp: header.timestamp + 1n },
     beneficiary: { ...header, beneficiary: flipFirstBit(header.beneficiary) },
   };
@@ -86,6 +91,7 @@ describe("hashBlockHeader", () => {
       () => hashBlockHeader({ ...header, transactionsRoot: new Uint8Array(33) }),
       RangeError,
     );
+    assert.throws(() => hashBlockHeader({ ...header, stateRoot: new Uint8Array(31) }), RangeError);
     assert.throws(
       () => hashBlockHeader({ ...header, beneficiary: new Uint8Array(19) }),
       RangeError,
@@ -131,7 +137,7 @@ describe("computeTransactionsRoot", () => {
 
 describe("createGenesisBlock", () => {
   test("has height 0, no parent, no transactions and no beneficiary", () => {
-    const { header, transactions } = createGenesisBlock(GENESIS_TIMESTAMP);
+    const { header, transactions } = createStructuralGenesisBlock(GENESIS_TIMESTAMP);
 
     assert.equal(header.height, 0n);
     assert.deepEqual(header.previousBlockHash, new Uint8Array(32));
@@ -141,14 +147,28 @@ describe("createGenesisBlock", () => {
     assert.deepEqual(transactions, []);
   });
 
-  test("is deterministic, and its timestamp makes a different chain", () => {
+  test("carries the state root it was given", () => {
+    const stateRoot = new Uint8Array(32).fill(0x5a);
+    const { header } = createGenesisBlock({ timestamp: GENESIS_TIMESTAMP, stateRoot });
+    assert.deepEqual(header.stateRoot, stateRoot);
+  });
+
+  test("is deterministic, and a different timestamp or state root makes a different chain", () => {
+    const hashWith = (timestamp: bigint, stateRoot: Uint8Array) =>
+      hashBlockHeader(createGenesisBlock({ timestamp, stateRoot }).header);
+    const stateRoot = createPlaceholderStateRoot();
+
     assert.deepEqual(
-      hashBlockHeader(createGenesisBlock(GENESIS_TIMESTAMP).header),
-      hashBlockHeader(createGenesisBlock(GENESIS_TIMESTAMP).header),
+      hashWith(GENESIS_TIMESTAMP, stateRoot),
+      hashWith(GENESIS_TIMESTAMP, stateRoot),
     );
     assert.notDeepEqual(
-      hashBlockHeader(createGenesisBlock(GENESIS_TIMESTAMP).header),
-      hashBlockHeader(createGenesisBlock(GENESIS_TIMESTAMP + 1n).header),
+      hashWith(GENESIS_TIMESTAMP, stateRoot),
+      hashWith(GENESIS_TIMESTAMP + 1n, stateRoot),
+    );
+    assert.notDeepEqual(
+      hashWith(GENESIS_TIMESTAMP, stateRoot),
+      hashWith(GENESIS_TIMESTAMP, flipFirstBit(stateRoot)),
     );
   });
 });
@@ -168,11 +188,12 @@ describe("createBlock", () => {
     assert.deepEqual(transactions, signedTransactions);
   });
 
-  test("carries the given timestamp and beneficiary", () => {
+  test("carries the given timestamp, beneficiary and state root", () => {
     const { header } = createValidChild();
 
     assert.equal(header.timestamp, GENESIS_TIMESTAMP + 10n);
     assert.deepEqual(header.beneficiary, beneficiaryAddress);
+    assert.deepEqual(header.stateRoot, createPlaceholderStateRoot());
   });
 });
 
@@ -187,6 +208,7 @@ describe("checkBlock", () => {
       transactions: [],
       timestamp: GENESIS_TIMESTAMP + 1n,
       beneficiary: beneficiaryAddress,
+      stateRoot: createPlaceholderStateRoot(),
     });
     assert.deepEqual(checkBlock(emptyBlock, genesisBlock.header), { valid: true });
   });
@@ -206,7 +228,9 @@ describe("checkBlock", () => {
 
     test("a link to a hash that is not the parent's", () => {
       const flippedLink = flipFirstBit(createValidChild().header.previousBlockHash);
-      const otherParentLink = hashBlockHeader(createGenesisBlock(GENESIS_TIMESTAMP - 1n).header);
+      const otherParentLink = hashBlockHeader(
+        createStructuralGenesisBlock(GENESIS_TIMESTAMP - 1n).header,
+      );
 
       for (const wrongLink of [flippedLink, otherParentLink]) {
         assert.deepEqual(
@@ -282,6 +306,7 @@ describe("checkBlock", () => {
       const malformedHeaders: Partial<BlockHeader>[] = [
         { previousBlockHash: new Uint8Array(31) },
         { transactionsRoot: new Uint8Array(33) },
+        { stateRoot: new Uint8Array(31) },
         { beneficiary: new Uint8Array(19) },
         { timestamp: -1n },
       ];
