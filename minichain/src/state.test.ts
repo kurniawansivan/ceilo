@@ -37,6 +37,7 @@ import {
   type TransferParameters,
 } from "./testing.ts";
 import type { SignedTransaction } from "./transaction.ts";
+import { MAXIMUM_TARGET } from "./work.ts";
 
 const CHAIN_IDENTIFIER = 1337n;
 const ALICE = 1;
@@ -56,6 +57,7 @@ const INITIAL_ALLOCATIONS = [
 const genesis = createGenesis({
   chainIdentifier: CHAIN_IDENTIFIER,
   timestamp: GENESIS_TIMESTAMP,
+  target: MAXIMUM_TARGET,
   allocations: INITIAL_ALLOCATIONS,
 });
 const initialState = genesis.state;
@@ -816,6 +818,7 @@ describe("createGenesis", () => {
         createGenesis({
           chainIdentifier,
           timestamp: GENESIS_TIMESTAMP,
+          target: MAXIMUM_TARGET,
           allocations: [{ address: addressOfAccount(ALICE), balance: aliceBalance }],
         }).block.header,
       );

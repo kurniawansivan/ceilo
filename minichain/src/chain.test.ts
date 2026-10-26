@@ -22,6 +22,7 @@ import {
   privateKeyWithValue,
   signTransfer,
 } from "./testing.ts";
+import { MAXIMUM_TARGET } from "./work.ts";
 
 const GENESIS_TIMESTAMP = 1_000n;
 const BLOCK_INTERVAL_IN_SECONDS = 10n;
@@ -321,6 +322,7 @@ const buildRealChain = (
   const genesis = createGenesis({
     chainIdentifier: CHAIN_IDENTIFIER,
     timestamp: GENESIS_TIMESTAMP,
+    target: MAXIMUM_TARGET,
     allocations: [{ address: addressOfAccount(SENDER), balance: ALLOCATED_BALANCE }],
   });
   const chain: Block[] = [genesis.block];

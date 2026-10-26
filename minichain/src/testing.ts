@@ -4,6 +4,7 @@ import { type Block, createGenesisBlock } from "./block.ts";
 import type { Hash } from "./hash.ts";
 import { type Address, deriveAddress, derivePublicKey } from "./keys.ts";
 import { type SignedTransaction, signTransaction } from "./transaction.ts";
+import { MAXIMUM_TARGET } from "./work.ts";
 
 /** Builds a 32-byte private key holding a small integer, for fixtures that need a known key. */
 export function privateKeyWithValue(value: number): Uint8Array {
@@ -31,9 +32,12 @@ export function createPlaceholderStateRoot(): Hash {
   return new Uint8Array(32).fill(0xab);
 }
 
-/** Builds a genesis block with a placeholder state root, for tests of block structure. */
-export function createStructuralGenesisBlock(timestamp: bigint): Block {
-  return createGenesisBlock({ timestamp, stateRoot: createPlaceholderStateRoot() });
+/** Builds a genesis block with a placeholder state root, easy to build on unless a target is given. */
+export function createStructuralGenesisBlock(
+  timestamp: bigint,
+  target: bigint = MAXIMUM_TARGET,
+): Block {
+  return createGenesisBlock({ timestamp, stateRoot: createPlaceholderStateRoot(), target });
 }
 
 /** Derives the address of the account whose private key is a small integer. */

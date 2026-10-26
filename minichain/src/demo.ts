@@ -15,6 +15,7 @@ import {
 } from "./state.ts";
 import { elementAt, flipFirstBit, privateKeyWithValue } from "./testing.ts";
 import { type SignedTransaction, signTransaction } from "./transaction.ts";
+import { MAXIMUM_TARGET } from "./work.ts";
 
 const CHAIN_IDENTIFIER = 1337n;
 const GENESIS_TIMESTAMP = 1_700_000_000n;
@@ -166,6 +167,7 @@ function createDemonstrationGenesis() {
   return createGenesis({
     chainIdentifier: CHAIN_IDENTIFIER,
     timestamp: GENESIS_TIMESTAMP,
+    target: MAXIMUM_TARGET,
     allocations: [
       { address: ALICE.address, balance: ALICE_ALLOCATION },
       { address: BOB.address, balance: BOB_ALLOCATION },

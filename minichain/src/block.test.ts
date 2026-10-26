@@ -13,6 +13,7 @@ import {
 import { hashOf } from "./hash.ts";
 import { deriveAddress, derivePublicKey } from "./keys.ts";
 import { computeMerkleRoot, createMerkleProof, verifyMerkleProof } from "./merkle.ts";
+import { findNonce } from "./mining.ts";
 import {
   createPlaceholderStateRoot,
   createSignedTransactionWithNonce,
@@ -22,8 +23,11 @@ import {
   privateKeyWithValue,
 } from "./testing.ts";
 import { hashSignedTransaction, type SignedTransaction } from "./transaction.ts";
+import { MAXIMUM_NONCE, MAXIMUM_TARGET, meetsTarget } from "./work.ts";
 
 const GENESIS_TIMESTAMP = 1_000n;
+const MODERATE_TARGET = 2n ** 252n - 1n;
+const MAXIMUM_NONCES_TRIED = 10_000n;
 const beneficiaryAddress = deriveAddress(derivePublicKey(privateKeyWithValue(3)));
 const genesisBlock = createStructuralGenesisBlock(GENESIS_TIMESTAMP);
 const signedTransactions = [0n, 1n, 2n].map(createSignedTransactionWithNonce);
@@ -43,6 +47,29 @@ const withHeader = (block: Block, replacement: Partial<BlockHeader>): Block => (
   ...block,
   header: { ...block.header, ...replacement },
 });
+
+/** Builds a block on a parent whose target is moderate, so the block's nonce actually matters. */
+const createUnminedChildOfHardParent = (): { parent: Block; unmined: Block } => {
+  const parent = createStructuralGenesisBlock(GENESIS_TIMESTAMP, MODERATE_TARGET);
+  const unmined = createBlock({
+    parentHeader: parent.header,
+    transactions: signedTransactions,
+    timestamp: GENESIS_TIMESTAMP + 10n,
+    beneficiary: beneficiaryAddress,
+    stateRoot: createPlaceholderStateRoot(),
+  });
+  return { parent, unmined };
+};
+
+/** Returns the block with the first nonce that does not meet its target, failing fast if none does. */
+const withFailingNonce = (block: Block): Block => {
+  for (let nonce = 0n; nonce < MAXIMUM_NONCES_TRIED; nonce++) {
+    if (!meetsTarget(hashBlockHeader({ ...block.header, nonce }), block.header.target)) {
+      return withHeader(block, { nonce });
+    }
+  }
+  return assert.fail("every nonce tried met the target, so none can fail it");
+};
 
 /** Returns the block with different transactions and its header untouched. */
 const withTransactions = (block: Block, transactions: readonly SignedTransaction[]): Block => ({
@@ -64,11 +91,15 @@ describe("hashBlockHeader", () => {
         header.stateRoot,
         header.timestamp,
         header.beneficiary,
+        header.target,
+        header.nonce,
       ]),
     );
   });
 
   const alteredHeaders: Record<string, BlockHeader> = {
+    target: { ...header, target: header.target - 1n },
+    nonce: { ...header, nonce: header.nonce + 1n },
     height: { ...header, height: header.height + 1n },
     "previous block hash": { ...header, previousBlockHash: flipFirstBit(header.previousBlockHash) },
     "transactions root": { ...header, transactionsRoot: flipFirstBit(header.transactionsRoot) },
@@ -101,6 +132,19 @@ describe("hashBlockHeader", () => {
   test("rejects a negative height or timestamp", () => {
     assert.throws(() => hashBlockHeader({ ...header, height: -1n }), RangeError);
     assert.throws(() => hashBlockHeader({ ...header, timestamp: -1n }), RangeError);
+  });
+
+  test("rejects a target outside 1 to the maximum, and a nonce outside 0 to the maximum", () => {
+    assert.throws(() => hashBlockHeader({ ...header, target: 0n }), RangeError);
+    assert.throws(() => hashBlockHeader({ ...header, target: -1n }), RangeError);
+    assert.throws(() => hashBlockHeader({ ...header, target: MAXIMUM_TARGET + 1n }), RangeError);
+    assert.throws(() => hashBlockHeader({ ...header, nonce: -1n }), RangeError);
+    assert.throws(() => hashBlockHeader({ ...header, nonce: MAXIMUM_NONCE + 1n }), RangeError);
+  });
+
+  test("accepts the extremes of both ranges", () => {
+    hashBlockHeader({ ...header, target: 1n, nonce: 0n });
+    hashBlockHeader({ ...header, target: MAXIMUM_TARGET, nonce: MAXIMUM_NONCE });
   });
 });
 
@@ -147,16 +191,27 @@ describe("createGenesisBlock", () => {
     assert.deepEqual(transactions, []);
   });
 
-  test("carries the state root it was given", () => {
+  test("carries the state root and target it was given, with a nonce of zero", () => {
     const stateRoot = new Uint8Array(32).fill(0x5a);
-    const { header } = createGenesisBlock({ timestamp: GENESIS_TIMESTAMP, stateRoot });
+    const { header } = createGenesisBlock({
+      timestamp: GENESIS_TIMESTAMP,
+      stateRoot,
+      target: MODERATE_TARGET,
+    });
     assert.deepEqual(header.stateRoot, stateRoot);
+    assert.equal(header.target, MODERATE_TARGET);
+    assert.equal(header.nonce, 0n);
   });
 
-  test("is deterministic, and a different timestamp or state root makes a different chain", () => {
-    const hashWith = (timestamp: bigint, stateRoot: Uint8Array) =>
-      hashBlockHeader(createGenesisBlock({ timestamp, stateRoot }).header);
+  test("is deterministic, and a different timestamp, state root or target makes a different chain", () => {
+    const hashWith = (timestamp: bigint, stateRoot: Uint8Array, target = MAXIMUM_TARGET) =>
+      hashBlockHeader(createGenesisBlock({ timestamp, stateRoot, target }).header);
     const stateRoot = createPlaceholderStateRoot();
+
+    assert.notDeepEqual(
+      hashWith(GENESIS_TIMESTAMP, stateRoot),
+      hashWith(GENESIS_TIMESTAMP, stateRoot, MODERATE_TARGET),
+    );
 
     assert.deepEqual(
       hashWith(GENESIS_TIMESTAMP, stateRoot),
@@ -195,11 +250,37 @@ describe("createBlock", () => {
     assert.deepEqual(header.beneficiary, beneficiaryAddress);
     assert.deepEqual(header.stateRoot, createPlaceholderStateRoot());
   });
+
+  test("starts unmined, with the parent's target unless another is given", () => {
+    const inherited = createValidChild().header;
+    assert.equal(inherited.nonce, 0n);
+    assert.equal(inherited.target, genesisBlock.header.target);
+
+    const overridden = createBlock({
+      parentHeader: genesisBlock.header,
+      transactions: [],
+      timestamp: GENESIS_TIMESTAMP + 10n,
+      beneficiary: beneficiaryAddress,
+      stateRoot: createPlaceholderStateRoot(),
+      target: MODERATE_TARGET,
+      nonce: 77n,
+    }).header;
+    assert.equal(overridden.target, MODERATE_TARGET);
+    assert.equal(overridden.nonce, 77n);
+  });
 });
 
 describe("checkBlock", () => {
   test("accepts a block built by createBlock", () => {
     assert.deepEqual(checkBlock(createValidChild(), genesisBlock.header), { valid: true });
+  });
+
+  test("accepts a block that was mined to a moderate target", () => {
+    const { parent, unmined } = createUnminedChildOfHardParent();
+    const nonce = findNonce(unmined.header, 0n, 10_000);
+    assert.ok(nonce !== undefined);
+
+    assert.deepEqual(checkBlock(withHeader(unmined, { nonce }), parent.header), { valid: true });
   });
 
   test("accepts a block with no transactions", () => {
@@ -309,6 +390,8 @@ describe("checkBlock", () => {
         { stateRoot: new Uint8Array(31) },
         { beneficiary: new Uint8Array(19) },
         { timestamp: -1n },
+        { target: 0n },
+        { nonce: -1n },
       ];
       for (const malformedHeader of malformedHeaders) {
         assert.deepEqual(
@@ -330,6 +413,22 @@ describe("checkBlock", () => {
           reason: "malformed-header",
         },
       );
+    });
+
+    test("a target that is not the parent's", () => {
+      const block = withHeader(createValidChild(), { target: MAXIMUM_TARGET - 1n });
+      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+        valid: false,
+        reason: "target-mismatch",
+      });
+    });
+
+    test("a nonce that does not reach the target", () => {
+      const { parent, unmined } = createUnminedChildOfHardParent();
+      assert.deepEqual(checkBlock(withFailingNonce(unmined), parent.header), {
+        valid: false,
+        reason: "insufficient-work",
+      });
     });
 
     test("a transaction that cannot be hashed", () => {
@@ -359,6 +458,37 @@ describe("checkBlock", () => {
   });
 
   describe("reports the first broken rule when several are broken", () => {
+    test("a bad timestamp comes before a target mismatch", () => {
+      const block = withHeader(createValidChild(), {
+        timestamp: GENESIS_TIMESTAMP,
+        target: MAXIMUM_TARGET - 1n,
+      });
+      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+        valid: false,
+        reason: "timestamp-not-increasing",
+      });
+    });
+
+    test("a target mismatch comes before insufficient work", () => {
+      const { parent, unmined } = createUnminedChildOfHardParent();
+      const block = withFailingNonce(withHeader(unmined, { target: 1n }));
+      assert.deepEqual(checkBlock(block, parent.header), {
+        valid: false,
+        reason: "target-mismatch",
+      });
+    });
+
+    test("insufficient work comes before a wrong transactions root, so fake blocks are cheap to refuse", () => {
+      const { parent, unmined } = createUnminedChildOfHardParent();
+      const block = withFailingNonce(
+        withHeader(unmined, { transactionsRoot: flipFirstBit(unmined.header.transactionsRoot) }),
+      );
+      assert.deepEqual(checkBlock(block, parent.header), {
+        valid: false,
+        reason: "insufficient-work",
+      });
+    });
+
     test("a malformed header comes before a wrong height", () => {
       const block = withHeader(createValidChild(), { height: 9n, beneficiary: new Uint8Array(19) });
       assert.deepEqual(checkBlock(block, genesisBlock.header), {

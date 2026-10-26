@@ -97,6 +97,8 @@ export type BlockProduction =
 export type GenesisParameters = {
   readonly chainIdentifier: bigint;
   readonly timestamp: bigint;
+  /** The first target: how hard the first mined block is to find. */
+  readonly target: bigint;
   readonly allocations: readonly GenesisAllocation[];
 };
 
@@ -329,6 +331,7 @@ export function createGenesis(parameters: GenesisParameters): Genesis {
   const block = createGenesisBlock({
     timestamp: parameters.timestamp,
     stateRoot: computeStateRoot(state),
+    target: parameters.target,
   });
   return { block, state };
 }
