@@ -44,3 +44,21 @@ jobs:
         with:
           target: contracts/
           fail-on: medium
+
+  minichain:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: minichain
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run demo
