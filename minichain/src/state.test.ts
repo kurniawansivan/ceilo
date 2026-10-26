@@ -17,6 +17,7 @@ import {
   type ChainState,
   computeStateRoot,
   computeTotalSupply,
+  createAccountProof,
   createGenesis,
   createGenesisState,
   getAccount,
@@ -24,6 +25,7 @@ import {
   MINIMUM_FEE,
   produceBlock,
   type TransactionRejection,
+  verifyAccountProof,
 } from "./state.ts";
 import {
   addressOfAccount,
@@ -625,6 +627,174 @@ describe("computeStateRoot", () => {
     const aliceFirst = applyAccepted(applyAccepted(initialState, aliceToDave), bobToCarol);
     const bobFirst = applyAccepted(applyAccepted(initialState, bobToCarol), aliceToDave);
     assert.deepEqual(computeStateRoot(aliceFirst), computeStateRoot(bobFirst));
+  });
+});
+
+describe("account proofs", () => {
+  /** Builds a state of 17 accounts, so proofs have several levels. */
+  const createCrowdedState = (): ChainState =>
+    createGenesisState(
+      CHAIN_IDENTIFIER,
+      Array.from({ length: 17 }, (_value, index) => ({
+        address: addressOfAccount(index + 1),
+        balance: BigInt(100 * (index + 1)),
+      })),
+    );
+
+  test("every account of a small state is proven against the state root", () => {
+    const root = computeStateRoot(initialState);
+    for (const accountNumber of [ALICE, BOB]) {
+      const address = addressOfAccount(accountNumber);
+      const accountProof = createAccountProof(initialState, address);
+
+      assert.ok(accountProof);
+      assert.deepEqual(accountProof.account, accountOf(initialState, accountNumber));
+      assert.equal(verifyAccountProof(root, address, accountProof), true);
+    }
+  });
+
+  test("every account of a state with 17 accounts is proven in at most 5 steps", () => {
+    const crowdedState = createCrowdedState();
+    const root = computeStateRoot(crowdedState);
+    for (let accountNumber = 1; accountNumber <= 17; accountNumber++) {
+      const address = addressOfAccount(accountNumber);
+      const accountProof = createAccountProof(crowdedState, address);
+
+      assert.ok(accountProof, `account ${accountNumber}`);
+      assert.equal(
+        verifyAccountProof(root, address, accountProof),
+        true,
+        `account ${accountNumber}`,
+      );
+      assert.ok(accountProof.proof.length <= 5, `account ${accountNumber} needs too many steps`);
+    }
+  });
+
+  test("a state with one account needs a single step, beside the chain identifier", () => {
+    const singleAccountState = createGenesisState(CHAIN_IDENTIFIER, [
+      { address: addressOfAccount(ALICE), balance: 5n },
+    ]);
+    const accountProof = createAccountProof(singleAccountState, addressOfAccount(ALICE));
+
+    assert.ok(accountProof);
+    assert.equal(accountProof.proof.length, 1);
+    assert.equal(
+      verifyAccountProof(
+        computeStateRoot(singleAccountState),
+        addressOfAccount(ALICE),
+        accountProof,
+      ),
+      true,
+    );
+  });
+
+  test("follow the state: a new proof fits the new root, and the old proof no longer does", () => {
+    const oldProof = createAccountProof(initialState, addressOfAccount(BOB));
+    const newState = applyAccepted(initialState, signTransfer(aliceToBob()));
+    const newProof = createAccountProof(newState, addressOfAccount(BOB));
+
+    assert.ok(oldProof && newProof);
+    assert.equal(newProof.account.balance, BOB_BALANCE + 100n);
+    assert.equal(
+      verifyAccountProof(computeStateRoot(newState), addressOfAccount(BOB), newProof),
+      true,
+    );
+    assert.equal(
+      verifyAccountProof(computeStateRoot(newState), addressOfAccount(BOB), oldProof),
+      false,
+    );
+  });
+
+  test("let a light client check a balance knowing only a block header", () => {
+    const block = produceTestBlock([signTransfer(aliceToBob())]);
+    const applied = applyBlock(initialState, block);
+    assert.ok(applied.valid);
+
+    const accountProof = createAccountProof(applied.state, addressOfAccount(BOB));
+    assert.ok(accountProof);
+    assert.equal(
+      verifyAccountProof(block.header.stateRoot, addressOfAccount(BOB), accountProof),
+      true,
+    );
+  });
+
+  test("cannot prove an account that is not in the state, since a Merkle tree cannot show absence", () => {
+    assert.equal(createAccountProof(initialState, addressOfAccount(DAVE)), undefined);
+  });
+
+  test("still prove an account that spent its whole balance, because its nonce keeps it in the state", () => {
+    const emptiedState = applyAccepted(
+      initialState,
+      signTransfer(aliceToBob({ amount: ALICE_BALANCE - 3n, fee: 3n })),
+    );
+    const accountProof = createAccountProof(emptiedState, addressOfAccount(ALICE));
+
+    assert.ok(accountProof);
+    assert.deepEqual(accountProof.account, { balance: 0n, nonce: 1n });
+    assert.equal(
+      verifyAccountProof(computeStateRoot(emptiedState), addressOfAccount(ALICE), accountProof),
+      true,
+    );
+  });
+
+  describe("reject a forged claim", () => {
+    const root = computeStateRoot(initialState);
+    const aliceAddress = addressOfAccount(ALICE);
+    const genuineProof = createAccountProof(initialState, aliceAddress);
+    assert.ok(genuineProof);
+
+    test("sanity check: the genuine proof is accepted", () => {
+      assert.equal(verifyAccountProof(root, aliceAddress, genuineProof), true);
+    });
+
+    test("a larger balance than the real one", () => {
+      const forgedProof = {
+        ...genuineProof,
+        account: { ...genuineProof.account, balance: genuineProof.account.balance + 1n },
+      };
+      assert.equal(verifyAccountProof(root, aliceAddress, forgedProof), false);
+    });
+
+    test("a different nonce", () => {
+      const forgedProof = {
+        ...genuineProof,
+        account: { ...genuineProof.account, nonce: genuineProof.account.nonce + 1n },
+      };
+      assert.equal(verifyAccountProof(root, aliceAddress, forgedProof), false);
+    });
+
+    test("another account's address with this account's proof", () => {
+      assert.equal(verifyAccountProof(root, addressOfAccount(BOB), genuineProof), false);
+    });
+
+    test("a root that is not the state's", () => {
+      assert.equal(verifyAccountProof(flipFirstBit(root), aliceAddress, genuineProof), false);
+    });
+
+    test("a proof step with one bit flipped", () => {
+      const [firstStep, ...otherSteps] = genuineProof.proof;
+      assert.ok(firstStep);
+      const forgedProof = {
+        ...genuineProof,
+        proof: [{ ...firstStep, siblingHash: flipFirstBit(firstStep.siblingHash) }, ...otherSteps],
+      };
+      assert.equal(verifyAccountProof(root, aliceAddress, forgedProof), false);
+    });
+
+    test("a proof with its steps removed", () => {
+      assert.equal(verifyAccountProof(root, aliceAddress, { ...genuineProof, proof: [] }), false);
+    });
+
+    test("a claim that cannot be encoded, without throwing", () => {
+      const negativeClaim = { ...genuineProof, account: { balance: -1n, nonce: 0n } };
+      const untypedClaim = {
+        ...genuineProof,
+        account: { balance: 100, nonce: 0n },
+      } as unknown as typeof genuineProof;
+
+      assert.equal(verifyAccountProof(root, aliceAddress, negativeClaim), false);
+      assert.equal(verifyAccountProof(root, aliceAddress, untypedClaim), false);
+    });
   });
 });
 

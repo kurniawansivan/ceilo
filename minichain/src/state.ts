@@ -1,10 +1,16 @@
 import { equalBytes } from "@noble/curves/utils.js";
 
+import { tryCompute } from "./attempt.ts";
 import { type Block, type BlockHeader, createBlock, createGenesisBlock } from "./block.ts";
 import { encode } from "./encoding.ts";
 import { fromHexadecimal, type Hash, toHexadecimal } from "./hash.ts";
 import { ADDRESS_LENGTH, type Address } from "./keys.ts";
-import { computeMerkleRoot } from "./merkle.ts";
+import {
+  computeMerkleRoot,
+  createMerkleProof,
+  type MerkleProof,
+  verifyMerkleProof,
+} from "./merkle.ts";
 import { recoverSender, type SignedTransaction } from "./transaction.ts";
 
 const CHAIN_LEAF_DOMAIN = "ceilo/chain-identifier";
@@ -26,6 +32,12 @@ export type Account = {
 export type ChainState = {
   readonly chainIdentifier: bigint;
   readonly accounts: ReadonlyMap<string, Account>;
+};
+
+/** An account's balance and nonce, with the Merkle proof that they are part of a state root. */
+export type AccountProof = {
+  readonly account: Account;
+  readonly proof: MerkleProof;
 };
 
 /** Coins that exist from the start, given to an address by the genesis state. */
@@ -146,18 +158,6 @@ function isWellFormed(transaction: SignedTransaction): boolean {
   );
 }
 
-/** Recovers the sender, returning undefined instead of throwing when the signature is invalid. */
-function tryRecoverSender(transaction: SignedTransaction): Address | undefined {
-  try {
-    return recoverSender(transaction);
-  } catch (error) {
-    if (error instanceof RangeError || error instanceof TypeError) {
-      return undefined;
-    }
-    throw error;
-  }
-}
-
 /** Checks a transaction against the accounts and applies it if it passes, else returns why not. */
 function applyToAccounts(
   accounts: Map<string, Account>,
@@ -183,7 +183,7 @@ function applyToAccounts(
   if (transaction.fee < MINIMUM_FEE) {
     return "fee-too-low";
   }
-  const sender = tryRecoverSender(transaction);
+  const sender = tryCompute(() => recoverSender(transaction));
   if (sender === undefined) {
     return "invalid-signature";
   }
@@ -275,14 +275,52 @@ function applyTransactions(
   return { valid: true, state: { chainIdentifier: state.chainIdentifier, accounts } };
 }
 
+/** Encodes an account and its address as the bytes of one leaf of the state tree. */
+function encodeAccountLeaf(address: Address, account: Account): Uint8Array {
+  return encode([ACCOUNT_LEAF_DOMAIN, address, account.balance, account.nonce]);
+}
+
+/** Lists the account entries sorted by address key, the order their leaves take in the state tree. */
+function sortedAccountEntries(state: ChainState): [string, Account][] {
+  return [...state.accounts.entries()].sort(([leftKey], [rightKey]) =>
+    leftKey < rightKey ? -1 : 1,
+  );
+}
+
+/** Lists the leaves of the state tree: the chain identifier first, then each account in address order. */
+function listStateLeaves(state: ChainState): Uint8Array[] {
+  const accountLeaves = sortedAccountEntries(state).map(([key, account]) =>
+    encodeAccountLeaf(fromHexadecimal(key), account),
+  );
+  return [encode([CHAIN_LEAF_DOMAIN, state.chainIdentifier]), ...accountLeaves];
+}
+
 /** Computes the Merkle root over the chain identifier and every account, sorted by address. */
 export function computeStateRoot(state: ChainState): Hash {
-  const accountLeaves = [...state.accounts.entries()]
-    .sort(([leftKey], [rightKey]) => (leftKey < rightKey ? -1 : 1))
-    .map(([key, account]) =>
-      encode([ACCOUNT_LEAF_DOMAIN, fromHexadecimal(key), account.balance, account.nonce]),
-    );
-  return computeMerkleRoot([encode([CHAIN_LEAF_DOMAIN, state.chainIdentifier]), ...accountLeaves]);
+  return computeMerkleRoot(listStateLeaves(state));
+}
+
+/** Builds a proof of an account's balance and nonce, or undefined if the state has no such account. */
+export function createAccountProof(state: ChainState, address: Address): AccountProof | undefined {
+  const account = state.accounts.get(accountKey(address));
+  if (account === undefined) {
+    return undefined;
+  }
+  const accountPosition = sortedAccountEntries(state).findIndex(
+    ([key]) => key === accountKey(address),
+  );
+  // Leaf 0 is the chain identifier, so account leaves start at position 1.
+  return { account, proof: createMerkleProof(listStateLeaves(state), accountPosition + 1) };
+}
+
+/** Checks a claimed account against a state root alone, returning false for any malformed claim. */
+export function verifyAccountProof(
+  stateRoot: Hash,
+  address: Address,
+  accountProof: AccountProof,
+): boolean {
+  const leaf = tryCompute(() => encodeAccountLeaf(address, accountProof.account));
+  return leaf !== undefined && verifyMerkleProof(leaf, accountProof.proof, stateRoot);
 }
 
 /** Creates the genesis state and a genesis block whose header commits to it, allocations included. */

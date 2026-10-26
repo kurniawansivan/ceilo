@@ -1,5 +1,6 @@
 import { equalBytes } from "@noble/curves/utils.js";
 
+import { tryCompute } from "./attempt.ts";
 import { HASH_LENGTH, type Hash, hashOf } from "./hash.ts";
 import { ADDRESS_LENGTH, type Address } from "./keys.ts";
 import { computeMerkleRoot } from "./merkle.ts";
@@ -53,18 +54,6 @@ export type GenesisBlockParameters = {
   readonly timestamp: bigint;
   readonly stateRoot: Hash;
 };
-
-/** Runs a computation, returning undefined when it rejects its input with a RangeError or TypeError. */
-function tryCompute<Result>(computation: () => Result): Result | undefined {
-  try {
-    return computation();
-  } catch (error) {
-    if (error instanceof RangeError || error instanceof TypeError) {
-      return undefined;
-    }
-    throw error;
-  }
-}
 
 /** Builds the result for a block that broke a rule. */
 function reject(reason: BlockInvalidReason): BlockCheck {
