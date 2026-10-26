@@ -15,6 +15,14 @@ Solo, about 10 hours per week, $0 budget in stage a. MVP target: 12 weeks.
 | M6 x402 integration | 10-11 | HTTP 402 flow, payload signing, TypeScript SDK | SDK and a demo agent paying an endpoint |
 | M7 Dashboard and release | 12 | Passkeys, deployment and verification, documentation | Policy dashboard, Base Sepolia deployment, README and demo video |
 
+## Progress
+
+| Module | Status |
+|---|---|
+| M0 | Done. |
+| M1 | Done, see the [learn note](learn/M1.md). The scope grew beyond the plan: a state root in block headers, light-client balance proofs and an attack demonstration. The check answers were written by Claude at the user's request. |
+| M2-M7 | Not started. |
+
 ## Definition of done, stage a
 
 - M0-M7 complete; each has a learn note and answered check questions.

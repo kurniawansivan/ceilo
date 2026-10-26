@@ -19,6 +19,12 @@ Roadmap, definition of done and stage gates: `docs/roadmap.md`. Why each decisio
 - Pinned tool and library versions, and why: `docs/adr/0002-toolchain-pins.md`. Bump a pin in its own commit with the reason.
 - Standards (ERC-4337, ERC-7579, x402) move fast. Check the official spec at the start of each module that uses one, and record the version read in the module's learn note.
 
+## Code style
+
+- Write every identifier out in full: `transaction`, `signature`, `index`, `hexadecimal`, not `tx`, `sig`, `i`, `hex`. Names fixed by a standard, the language or an imported library (`keccak_256`, `Uint8Array`, `msg.sender`) are the only exceptions.
+- Put exactly one comment line above every function and helper, stating what it does. The title of a `test` or `describe` callback is its comment.
+- Solidity: one `/// @notice` line per function; descriptive parameter names replace `@param` and `@return` tags.
+
 ## Security (all stages)
 
 - Testnet and throwaway keys only until an independent audit exists.
@@ -31,15 +37,17 @@ Roadmap, definition of done and stage gates: `docs/roadmap.md`. Why each decisio
 
 - Conventional Commits. Short-lived branches, PR into `main`.
 - CI must be green to merge: `forge fmt --check`, `forge test`, coverage of at least 90% (line and branch) on policy modules, Slither with no unaddressed high or medium findings.
-- Solhint clean. NatSpec on every public and external function.
+- Solhint clean.
+- TypeScript packages: CI runs `biome check`, `tsc --noEmit` and the tests.
 
 ## Learning protocol
 
 Each module teaches something and ships a portfolio artifact. For every module:
 
 1. Explain the concept briefly before any code.
-2. The user picks the key parts to write; Claude writes the rest.
-3. Claude reviews what the user wrote.
-4. Close with `docs/learn/M<n>.md` (use `docs/learn/TEMPLATE.md`) holding 3-5 check questions.
+2. Split the module into small steps, each test first. The user decides per module which parts they write; Claude writes the rest (M1: Claude writes all code).
+3. End every step at a **checkpoint**: stop, walk the user through what was built and why, show the tests and results, then wait for their evaluation and questions. The next step starts only after the user says to proceed.
+4. Claude reviews any code the user wrote.
+5. Close with `docs/learn/M<n>.md` (use `docs/learn/TEMPLATE.md`) holding 3-5 check questions.
 
 A module is done when its tests are green, its learn note exists, and the user has answered the check questions.

@@ -1,0 +1,27 @@
+{
+  "name": "@ceilo/minichain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Educational blockchain with its own native coin. Learning-only.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "demo": "node src/demo.ts",
+    "check": "biome check",
+    "fix": "biome check --write",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@noble/curves": "2.3.0",
+    "@noble/hashes": "2.3.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.5",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}
