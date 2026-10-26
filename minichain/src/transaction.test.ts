@@ -11,8 +11,8 @@ import {
   hashUnsignedTransaction,
   recoverSender,
   SIGNATURE_LENGTH,
-  signTransaction,
   type SignedTransaction,
+  signTransaction,
   type UnsignedTransaction,
 } from "./transaction.ts";
 
@@ -83,7 +83,10 @@ describe("signTransaction and recoverSender", () => {
   test("keep the signed fields unchanged", () => {
     const unsignedTransaction = createUnsignedTransaction();
     const signedTransaction = signTransaction(unsignedTransaction, senderPrivateKey);
-    assert.deepEqual({ ...signedTransaction, signature: undefined }, { ...unsignedTransaction, signature: undefined });
+    assert.deepEqual(
+      { ...signedTransaction, signature: undefined },
+      { ...unsignedTransaction, signature: undefined },
+    );
   });
 
   for (const [fieldName, alteration] of Object.entries(FIELD_ALTERATIONS)) {
@@ -95,7 +98,10 @@ describe("signTransaction and recoverSender", () => {
   }
 
   test("a signature for one chain cannot be replayed on another", () => {
-    const signedOnChainOne = signTransaction(createUnsignedTransaction({ chainIdentifier: 1n }), senderPrivateKey);
+    const signedOnChainOne = signTransaction(
+      createUnsignedTransaction({ chainIdentifier: 1n }),
+      senderPrivateKey,
+    );
     const replayedOnChainTwo: SignedTransaction = { ...signedOnChainOne, chainIdentifier: 2n };
     assert.notDeepEqual(tryRecoverSender(replayedOnChainTwo), senderAddress);
   });
@@ -107,17 +113,29 @@ describe("recoverSender rejects", () => {
     const twinSignature = toHighSTwinSignature(signedTransaction.signature);
 
     // The attack is real: the library still recovers the same key from the twin.
-    const recoveredPublicKey = secp256k1.recoverPublicKey(twinSignature, hashUnsignedTransaction(signedTransaction), {
-      prehash: false,
-    });
-    assert.deepEqual(deriveAddress(secp256k1.Point.fromBytes(recoveredPublicKey).toBytes(false)), senderAddress);
+    const recoveredPublicKey = secp256k1.recoverPublicKey(
+      twinSignature,
+      hashUnsignedTransaction(signedTransaction),
+      {
+        prehash: false,
+      },
+    );
+    assert.deepEqual(
+      deriveAddress(secp256k1.Point.fromBytes(recoveredPublicKey).toBytes(false)),
+      senderAddress,
+    );
 
-    assert.throws(() => recoverSender({ ...signedTransaction, signature: twinSignature }), RangeError);
+    assert.throws(
+      () => recoverSender({ ...signedTransaction, signature: twinSignature }),
+      RangeError,
+    );
   });
 
   test("a signature of the wrong length", () => {
     const signedTransaction = signTransaction(createUnsignedTransaction(), senderPrivateKey);
-    assert.throws(() => recoverSender({ ...signedTransaction, signature: signedTransaction.signature.slice(1) }));
+    assert.throws(() =>
+      recoverSender({ ...signedTransaction, signature: signedTransaction.signature.slice(1) }),
+    );
     assert.throws(() => recoverSender({ ...signedTransaction, signature: new Uint8Array(66) }));
   });
 
@@ -132,7 +150,9 @@ describe("recoverSender rejects", () => {
 
   test("an all-zero signature", () => {
     const signedTransaction = signTransaction(createUnsignedTransaction(), senderPrivateKey);
-    assert.throws(() => recoverSender({ ...signedTransaction, signature: new Uint8Array(SIGNATURE_LENGTH) }));
+    assert.throws(() =>
+      recoverSender({ ...signedTransaction, signature: new Uint8Array(SIGNATURE_LENGTH) }),
+    );
   });
 });
 
@@ -145,7 +165,11 @@ describe("signTransaction rejects", () => {
   test("negative amounts, fees, nonces and chain identifiers", () => {
     for (const negativeField of ["amount", "fee", "nonce", "chainIdentifier"] as const) {
       const unsignedTransaction = createUnsignedTransaction({ [negativeField]: -1n });
-      assert.throws(() => signTransaction(unsignedTransaction, senderPrivateKey), RangeError, negativeField);
+      assert.throws(
+        () => signTransaction(unsignedTransaction, senderPrivateKey),
+        RangeError,
+        negativeField,
+      );
     }
   });
 });
@@ -173,18 +197,35 @@ describe("hashSignedTransaction", () => {
     const signedTransaction = signTransaction(createUnsignedTransaction(), senderPrivateKey);
     assert.deepEqual(
       hashSignedTransaction(signedTransaction),
-      hashOf(["ceilo/signed-transaction", 1337n, 0n, recipientAddress, 100n, 1n, signedTransaction.signature]),
+      hashOf([
+        "ceilo/signed-transaction",
+        1337n,
+        0n,
+        recipientAddress,
+        100n,
+        1n,
+        signedTransaction.signature,
+      ]),
     );
   });
 
   test("differs from the hash that was signed", () => {
     const signedTransaction = signTransaction(createUnsignedTransaction(), senderPrivateKey);
-    assert.notDeepEqual(hashSignedTransaction(signedTransaction), hashUnsignedTransaction(signedTransaction));
+    assert.notDeepEqual(
+      hashSignedTransaction(signedTransaction),
+      hashUnsignedTransaction(signedTransaction),
+    );
   });
 
   test("covers the signature, so a high-S twin would get a different identifier", () => {
     const signedTransaction = signTransaction(createUnsignedTransaction(), senderPrivateKey);
-    const twinTransaction = { ...signedTransaction, signature: toHighSTwinSignature(signedTransaction.signature) };
-    assert.notDeepEqual(hashSignedTransaction(signedTransaction), hashSignedTransaction(twinTransaction));
+    const twinTransaction = {
+      ...signedTransaction,
+      signature: toHighSTwinSignature(signedTransaction.signature),
+    };
+    assert.notDeepEqual(
+      hashSignedTransaction(signedTransaction),
+      hashSignedTransaction(twinTransaction),
+    );
   });
 });

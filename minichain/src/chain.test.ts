@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 
 import { type Block, createBlock, createGenesisBlock, hashBlockHeader } from "./block.ts";
 import { checkChain } from "./chain.ts";
-import { type Hash } from "./hash.ts";
+import type { Hash } from "./hash.ts";
 import { deriveAddress, derivePublicKey } from "./keys.ts";
 import {
   createSignedTransactionWithNonce,
@@ -39,7 +39,8 @@ const buildChain = (blockCount: number, genesisTimestamp = GENESIS_TIMESTAMP): B
 };
 
 /** Returns the hash of the genesis block, which is what identifies a chain. */
-const genesisHashOf = (chain: readonly Block[]): Hash => hashBlockHeader(elementAt(chain, 0).header);
+const genesisHashOf = (chain: readonly Block[]): Hash =>
+  hashBlockHeader(elementAt(chain, 0).header);
 
 /** Returns a copy of the chain with one block swapped for another. */
 const replaceBlockAt = (chain: readonly Block[], blockIndex: number, replacement: Block): Block[] =>
@@ -69,7 +70,10 @@ const rewriteBlockConsistently = (chain: readonly Block[], blockIndex: number): 
   assert.ok(firstTransaction);
   return createBlock({
     parentHeader: elementAt(chain, blockIndex - 1).header,
-    transactions: [{ ...firstTransaction, amount: firstTransaction.amount + 1n }, ...otherTransactions],
+    transactions: [
+      { ...firstTransaction, amount: firstTransaction.amount + 1n },
+      ...otherTransactions,
+    ],
     timestamp: original.header.timestamp,
     beneficiary: original.header.beneficiary,
   });
@@ -117,7 +121,10 @@ describe("checkChain rejects", () => {
   test("a genesis block whose header is malformed, instead of crashing", () => {
     const chain = buildChain(3);
     const genesis = elementAt(chain, 0);
-    const malformedGenesis = { ...genesis, header: { ...genesis.header, beneficiary: new Uint8Array(19) } };
+    const malformedGenesis = {
+      ...genesis,
+      header: { ...genesis.header, beneficiary: new Uint8Array(19) },
+    };
 
     assert.deepEqual(checkChain(replaceBlockAt(chain, 0, malformedGenesis), genesisHashOf(chain)), {
       valid: false,
@@ -128,7 +135,10 @@ describe("checkChain rejects", () => {
 
   test("transactions slipped into the genesis block under its unchanged header", () => {
     const chain = buildChain(3);
-    const tamperedGenesis = { ...elementAt(chain, 0), transactions: [createSignedTransactionWithNonce(0n)] };
+    const tamperedGenesis = {
+      ...elementAt(chain, 0),
+      transactions: [createSignedTransactionWithNonce(0n)],
+    };
     assert.deepEqual(checkChain(replaceBlockAt(chain, 0, tamperedGenesis), genesisHashOf(chain)), {
       valid: false,
       blockIndex: 0,
@@ -143,7 +153,10 @@ describe("checkChain rejects", () => {
     assert.ok(firstTransaction);
     const alteredBlock = {
       ...block,
-      transactions: [{ ...firstTransaction, amount: firstTransaction.amount + 1n }, ...otherTransactions],
+      transactions: [
+        { ...firstTransaction, amount: firstTransaction.amount + 1n },
+        ...otherTransactions,
+      ],
     };
 
     assert.deepEqual(checkChain(replaceBlockAt(chain, 2, alteredBlock), genesisHashOf(chain)), {
@@ -166,7 +179,7 @@ describe("checkChain rejects", () => {
 
   test("a missing block in the middle, where the heights jump", () => {
     const chain = buildChain(6);
-    const chainWithGap = chain.filter((block, blockIndex) => blockIndex !== 2);
+    const chainWithGap = chain.filter((_block, blockIndex) => blockIndex !== 2);
 
     assert.deepEqual(checkChain(chainWithGap, genesisHashOf(chain)), {
       valid: false,
@@ -177,7 +190,11 @@ describe("checkChain rejects", () => {
 
   test("two blocks swapped", () => {
     const chain = buildChain(6);
-    const swappedChain = replaceBlockAt(replaceBlockAt(chain, 2, elementAt(chain, 3)), 3, elementAt(chain, 2));
+    const swappedChain = replaceBlockAt(
+      replaceBlockAt(chain, 2, elementAt(chain, 3)),
+      3,
+      elementAt(chain, 2),
+    );
 
     assert.deepEqual(checkChain(swappedChain, genesisHashOf(chain)), {
       valid: false,
@@ -201,17 +218,23 @@ describe("checkChain rejects", () => {
     const chain = buildChain(6);
     const foreignChain = buildChain(6, GENESIS_TIMESTAMP + 1n);
 
-    assert.deepEqual(checkChain(replaceBlockAt(chain, 3, elementAt(foreignChain, 3)), genesisHashOf(chain)), {
-      valid: false,
-      blockIndex: 3,
-      reason: "previous-hash-mismatch",
-    });
+    assert.deepEqual(
+      checkChain(replaceBlockAt(chain, 3, elementAt(foreignChain, 3)), genesisHashOf(chain)),
+      {
+        valid: false,
+        blockIndex: 3,
+        reason: "previous-hash-mismatch",
+      },
+    );
   });
 
   test("a chain with several broken blocks, naming the first", () => {
     const chain = buildChain(7);
     const alteredAtTwo = replaceBlockAt(chain, 2, { ...elementAt(chain, 2), transactions: [] });
-    const alteredAtTwoAndFive = replaceBlockAt(alteredAtTwo, 5, { ...elementAt(chain, 5), transactions: [] });
+    const alteredAtTwoAndFive = replaceBlockAt(alteredAtTwo, 5, {
+      ...elementAt(chain, 5),
+      transactions: [],
+    });
 
     assert.deepEqual(checkChain(alteredAtTwoAndFive, genesisHashOf(chain)), {
       valid: false,
@@ -228,7 +251,10 @@ describe("what hash links alone cannot stop", () => {
     const rewrittenChain = replaceBlockAt(chain, 5, rewrittenTip);
 
     assert.deepEqual(checkChain(rewrittenChain, genesisHashOf(chain)), { valid: true });
-    assert.notDeepEqual(hashBlockHeader(rewrittenTip.header), hashBlockHeader(elementAt(chain, 5).header));
+    assert.notDeepEqual(
+      hashBlockHeader(rewrittenTip.header),
+      hashBlockHeader(elementAt(chain, 5).header),
+    );
   });
 
   test("rewritten history that is re-linked all the way up also passes, which is why consensus costs work", () => {
@@ -242,7 +268,11 @@ describe("what hash links alone cannot stop", () => {
       if (blockIndex < 2) {
         assert.deepEqual(rewrittenHash, originalHash, `block ${blockIndex} is before the rewrite`);
       } else {
-        assert.notDeepEqual(rewrittenHash, originalHash, `block ${blockIndex} is after the rewrite`);
+        assert.notDeepEqual(
+          rewrittenHash,
+          originalHash,
+          `block ${blockIndex} is after the rewrite`,
+        );
       }
     }
   });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { type Hash } from "./hash.ts";
+import type { Hash } from "./hash.ts";
 import { deriveAddress, derivePublicKey } from "./keys.ts";
 import { type SignedTransaction, signTransaction } from "./transaction.ts";
 

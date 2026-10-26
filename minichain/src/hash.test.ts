@@ -4,7 +4,8 @@ import { describe, test } from "node:test";
 import { encode } from "./encoding.ts";
 import { fromHexadecimal, HASH_LENGTH, hashBytes, hashOf, toHexadecimal } from "./hash.ts";
 
-const KECCAK256_OF_EMPTY_TEXT = "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470";
+const KECCAK256_OF_EMPTY_TEXT =
+  "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470";
 const KECCAK256_OF_ABC = "0x4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45";
 const SHA3_256_OF_EMPTY_TEXT = "0xa7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a";
 

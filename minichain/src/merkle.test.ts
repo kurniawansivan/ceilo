@@ -40,7 +40,9 @@ const replaceStep = (
   position: number,
   replacement: Partial<MerkleProofStep>,
 ): MerkleProof =>
-  proof.map((step, stepPosition) => (stepPosition === position ? { ...step, ...replacement } : step));
+  proof.map((step, stepPosition) =>
+    stepPosition === position ? { ...step, ...replacement } : step,
+  );
 
 /** Returns the opposite side of a proof step. */
 const oppositeSide = (step: MerkleProofStep): "left" | "right" =>
@@ -67,7 +69,10 @@ describe("computeMerkleRoot", () => {
     test("three leaves: the odd leaf moves up unchanged instead of being duplicated", () => {
       const leafHashes = createLeafHashes(3);
       const leftNode = nodeHashOf(elementAt(leafHashes, 0), elementAt(leafHashes, 1));
-      assert.deepEqual(computeMerkleRoot(createLeaves(3)), nodeHashOf(leftNode, elementAt(leafHashes, 2)));
+      assert.deepEqual(
+        computeMerkleRoot(createLeaves(3)),
+        nodeHashOf(leftNode, elementAt(leafHashes, 2)),
+      );
     });
 
     test("four leaves: a balanced tree", () => {
@@ -83,7 +88,10 @@ describe("computeMerkleRoot", () => {
         nodeHashOf(elementAt(leafHashes, 0), elementAt(leafHashes, 1)),
         nodeHashOf(elementAt(leafHashes, 2), elementAt(leafHashes, 3)),
       );
-      assert.deepEqual(computeMerkleRoot(createLeaves(5)), nodeHashOf(leftNode, elementAt(leafHashes, 4)));
+      assert.deepEqual(
+        computeMerkleRoot(createLeaves(5)),
+        nodeHashOf(leftNode, elementAt(leafHashes, 4)),
+      );
     });
 
     test("six leaves: four on the left, two on the right", () => {
@@ -140,7 +148,7 @@ describe("computeMerkleRoot", () => {
       const leaves = createLeaves(4);
       const lists = [
         [],
-        ...Array.from({ length: 9 }, (unusedValue, leafCount) => createLeaves(leafCount + 1)),
+        ...Array.from({ length: 9 }, (_value, leafCount) => createLeaves(leafCount + 1)),
         // Bitcoin's duplicate-last-leaf rule makes each of these collide with the list before it.
         [elementAt(leaves, 0), elementAt(leaves, 1), elementAt(leaves, 2), elementAt(leaves, 2)],
         [elementAt(leaves, 0), elementAt(leaves, 0)],
@@ -206,7 +214,11 @@ describe("createMerkleProof", () => {
   test("rejects a leaf index that is negative, fractional, not a number or past the end", () => {
     const leaves = createLeaves(4);
     for (const invalidIndex of [-1, 1.5, Number.NaN, 4, 100]) {
-      assert.throws(() => createMerkleProof(leaves, invalidIndex), RangeError, String(invalidIndex));
+      assert.throws(
+        () => createMerkleProof(leaves, invalidIndex),
+        RangeError,
+        String(invalidIndex),
+      );
     }
   });
 });
@@ -219,7 +231,11 @@ describe("verifyMerkleProof", () => {
         const root = computeMerkleRoot(leaves);
         for (let leafIndex = 0; leafIndex < leafCount; leafIndex++) {
           const proof = createMerkleProof(leaves, leafIndex);
-          assert.equal(verifyMerkleProof(elementAt(leaves, leafIndex), proof, root), true, `leaf ${leafIndex}`);
+          assert.equal(
+            verifyMerkleProof(elementAt(leaves, leafIndex), proof, root),
+            true,
+            `leaf ${leafIndex}`,
+          );
         }
       });
     }
@@ -229,7 +245,11 @@ describe("verifyMerkleProof", () => {
       const root = computeMerkleRoot(leaves);
       for (const leafIndex of [0, 1, 499, 500, 998, 999]) {
         const proof = createMerkleProof(leaves, leafIndex);
-        assert.equal(verifyMerkleProof(elementAt(leaves, leafIndex), proof, root), true, `leaf ${leafIndex}`);
+        assert.equal(
+          verifyMerkleProof(elementAt(leaves, leafIndex), proof, root),
+          true,
+          `leaf ${leafIndex}`,
+        );
       }
     });
   });

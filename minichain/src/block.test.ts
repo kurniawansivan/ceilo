@@ -86,7 +86,10 @@ describe("hashBlockHeader", () => {
       () => hashBlockHeader({ ...header, transactionsRoot: new Uint8Array(33) }),
       RangeError,
     );
-    assert.throws(() => hashBlockHeader({ ...header, beneficiary: new Uint8Array(19) }), RangeError);
+    assert.throws(
+      () => hashBlockHeader({ ...header, beneficiary: new Uint8Array(19) }),
+      RangeError,
+    );
   });
 
   test("rejects a negative height or timestamp", () => {
@@ -191,10 +194,13 @@ describe("checkBlock", () => {
   describe("rejects", () => {
     test("a height that is not the parent's plus one", () => {
       for (const wrongHeight of [0n, 2n, 5n]) {
-        assert.deepEqual(checkBlock(withHeader(createValidChild(), { height: wrongHeight }), genesisBlock.header), {
-          valid: false,
-          reason: "unexpected-height",
-        });
+        assert.deepEqual(
+          checkBlock(withHeader(createValidChild(), { height: wrongHeight }), genesisBlock.header),
+          {
+            valid: false,
+            reason: "unexpected-height",
+          },
+        );
       }
     });
 
@@ -204,7 +210,10 @@ describe("checkBlock", () => {
 
       for (const wrongLink of [flippedLink, otherParentLink]) {
         assert.deepEqual(
-          checkBlock(withHeader(createValidChild(), { previousBlockHash: wrongLink }), genesisBlock.header),
+          checkBlock(
+            withHeader(createValidChild(), { previousBlockHash: wrongLink }),
+            genesisBlock.header,
+          ),
           { valid: false, reason: "previous-hash-mismatch" },
         );
       }
@@ -213,7 +222,10 @@ describe("checkBlock", () => {
     test("a timestamp that is not after the parent's", () => {
       for (const wrongTimestamp of [GENESIS_TIMESTAMP, GENESIS_TIMESTAMP - 1n, 0n]) {
         assert.deepEqual(
-          checkBlock(withHeader(createValidChild(), { timestamp: wrongTimestamp }), genesisBlock.header),
+          checkBlock(
+            withHeader(createValidChild(), { timestamp: wrongTimestamp }),
+            genesisBlock.header,
+          ),
           { valid: false, reason: "timestamp-not-increasing" },
         );
       }
@@ -222,7 +234,10 @@ describe("checkBlock", () => {
     test("a transactions root that was altered", () => {
       const alteredRoot = flipFirstBit(createValidChild().header.transactionsRoot);
       assert.deepEqual(
-        checkBlock(withHeader(createValidChild(), { transactionsRoot: alteredRoot }), genesisBlock.header),
+        checkBlock(
+          withHeader(createValidChild(), { transactionsRoot: alteredRoot }),
+          genesisBlock.header,
+        ),
         { valid: false, reason: "transactions-root-mismatch" },
       );
     });
@@ -240,14 +255,25 @@ describe("checkBlock", () => {
         "a removed transaction": [firstTransaction, secondTransaction],
         "an added transaction": [...signedTransactions, createSignedTransactionWithNonce(3n)],
         "reordered transactions": [secondTransaction, firstTransaction, thirdTransaction],
-        "a duplicated transaction": [firstTransaction, secondTransaction, thirdTransaction, thirdTransaction],
+        "a duplicated transaction": [
+          firstTransaction,
+          secondTransaction,
+          thirdTransaction,
+          thirdTransaction,
+        ],
       };
       for (const [description, tamperedTransactions] of Object.entries(tamperedTransactionLists)) {
         test(description, () => {
-          assert.deepEqual(checkBlock(withTransactions(createValidChild(), tamperedTransactions), genesisBlock.header), {
-            valid: false,
-            reason: "transactions-root-mismatch",
-          });
+          assert.deepEqual(
+            checkBlock(
+              withTransactions(createValidChild(), tamperedTransactions),
+              genesisBlock.header,
+            ),
+            {
+              valid: false,
+              reason: "transactions-root-mismatch",
+            },
+          );
         });
       }
     });
@@ -260,28 +286,40 @@ describe("checkBlock", () => {
         { timestamp: -1n },
       ];
       for (const malformedHeader of malformedHeaders) {
-        assert.deepEqual(checkBlock(withHeader(createValidChild(), malformedHeader), genesisBlock.header), {
-          valid: false,
-          reason: "malformed-header",
-        });
+        assert.deepEqual(
+          checkBlock(withHeader(createValidChild(), malformedHeader), genesisBlock.header),
+          {
+            valid: false,
+            reason: "malformed-header",
+          },
+        );
       }
     });
 
     test("a header whose height is not a bigint, as untyped network input might be", () => {
       const untypedHeader = { height: 1 } as unknown as Partial<BlockHeader>;
-      assert.deepEqual(checkBlock(withHeader(createValidChild(), untypedHeader), genesisBlock.header), {
-        valid: false,
-        reason: "malformed-header",
-      });
+      assert.deepEqual(
+        checkBlock(withHeader(createValidChild(), untypedHeader), genesisBlock.header),
+        {
+          valid: false,
+          reason: "malformed-header",
+        },
+      );
     });
 
     test("a transaction that cannot be hashed", () => {
       const firstTransaction = elementAt(signedTransactions, 0);
       const malformedTransaction = { ...firstTransaction, recipient: new Uint8Array(19) };
-      assert.deepEqual(checkBlock(withTransactions(createValidChild(), [malformedTransaction]), genesisBlock.header), {
-        valid: false,
-        reason: "malformed-transaction",
-      });
+      assert.deepEqual(
+        checkBlock(
+          withTransactions(createValidChild(), [malformedTransaction]),
+          genesisBlock.header,
+        ),
+        {
+          valid: false,
+          reason: "malformed-transaction",
+        },
+      );
     });
   });
 
@@ -298,12 +336,21 @@ describe("checkBlock", () => {
   describe("reports the first broken rule when several are broken", () => {
     test("a malformed header comes before a wrong height", () => {
       const block = withHeader(createValidChild(), { height: 9n, beneficiary: new Uint8Array(19) });
-      assert.deepEqual(checkBlock(block, genesisBlock.header), { valid: false, reason: "malformed-header" });
+      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+        valid: false,
+        reason: "malformed-header",
+      });
     });
 
     test("a wrong height comes before a broken link", () => {
-      const block = withHeader(createValidChild(), { height: 9n, previousBlockHash: new Uint8Array(32) });
-      assert.deepEqual(checkBlock(block, genesisBlock.header), { valid: false, reason: "unexpected-height" });
+      const block = withHeader(createValidChild(), {
+        height: 9n,
+        previousBlockHash: new Uint8Array(32),
+      });
+      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+        valid: false,
+        reason: "unexpected-height",
+      });
     });
 
     test("a broken link comes before a bad timestamp", () => {

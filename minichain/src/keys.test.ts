@@ -31,7 +31,10 @@ describe("derivePublicKey", () => {
   });
 
   test("is deterministic", () => {
-    assert.deepEqual(derivePublicKey(privateKeyWithValue(7)), derivePublicKey(privateKeyWithValue(7)));
+    assert.deepEqual(
+      derivePublicKey(privateKeyWithValue(7)),
+      derivePublicKey(privateKeyWithValue(7)),
+    );
   });
 
   test("rejects the zero key, which is not on the curve's valid range", () => {

@@ -22,7 +22,11 @@ function encodeLengthPrefix(length: number): Uint8Array {
 }
 
 /** Joins type tag, length prefix and payload so every item is self-delimiting. */
-function encodeTaggedItem(typeTag: number, prefixedLength: number, payload: Uint8Array): Uint8Array {
+function encodeTaggedItem(
+  typeTag: number,
+  prefixedLength: number,
+  payload: Uint8Array,
+): Uint8Array {
   return concatBytes(Uint8Array.of(typeTag), encodeLengthPrefix(prefixedLength), payload);
 }
 

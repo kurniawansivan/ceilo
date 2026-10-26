@@ -91,7 +91,11 @@ export function createMerkleProof(leaves: readonly Uint8Array[], leafIndex: numb
 }
 
 /** Checks that a leaf and its proof recompute the expected root, returning false for any malformed proof. */
-export function verifyMerkleProof(leaf: Uint8Array, proof: MerkleProof, expectedRoot: Hash): boolean {
+export function verifyMerkleProof(
+  leaf: Uint8Array,
+  proof: MerkleProof,
+  expectedRoot: Hash,
+): boolean {
   let runningHash = hashLeaf(leaf);
   for (const step of proof) {
     if (step.siblingSide === "left") {

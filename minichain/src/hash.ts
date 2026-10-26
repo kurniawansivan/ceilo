@@ -1,7 +1,7 @@
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 
-import { encode, type Encodable } from "./encoding.ts";
+import { type Encodable, encode } from "./encoding.ts";
 
 /** Number of bytes in every hash this module produces. */
 export const HASH_LENGTH = 32;

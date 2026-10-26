@@ -29,7 +29,10 @@ export function derivePublicKey(privateKey: PrivateKey): PublicKey {
 
 /** Derives an address from the public key without its 0x04 prefix, the same way Ethereum does. */
 export function deriveAddress(publicKey: PublicKey): Address {
-  if (publicKey.length !== UNCOMPRESSED_PUBLIC_KEY_LENGTH || publicKey[0] !== UNCOMPRESSED_PUBLIC_KEY_PREFIX) {
+  if (
+    publicKey.length !== UNCOMPRESSED_PUBLIC_KEY_LENGTH ||
+    publicKey[0] !== UNCOMPRESSED_PUBLIC_KEY_PREFIX
+  ) {
     throw new RangeError("public key must be uncompressed: 65 bytes starting with 0x04");
   }
   return hashBytes(publicKey.subarray(1)).slice(-ADDRESS_LENGTH);

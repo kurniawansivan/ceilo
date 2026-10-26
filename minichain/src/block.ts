@@ -1,6 +1,6 @@
 import { equalBytes } from "@noble/curves/utils.js";
 
-import { type Hash, HASH_LENGTH, hashOf } from "./hash.ts";
+import { HASH_LENGTH, type Hash, hashOf } from "./hash.ts";
 import { ADDRESS_LENGTH, type Address } from "./keys.ts";
 import { computeMerkleRoot } from "./merkle.ts";
 import { hashSignedTransaction, type SignedTransaction } from "./transaction.ts";

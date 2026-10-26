@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { encode, type Encodable } from "./encoding.ts";
+import { type Encodable, encode } from "./encoding.ts";
 
 /** Builds a byte array from plain numbers. */
 const byteArrayOf = (...values: number[]): Uint8Array => Uint8Array.from(values);

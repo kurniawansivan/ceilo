@@ -1,6 +1,6 @@
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 
-import { type Encodable } from "./encoding.ts";
+import type { Encodable } from "./encoding.ts";
 import { type Hash, hashOf } from "./hash.ts";
 import { ADDRESS_LENGTH, type Address, deriveAddress, type PrivateKey } from "./keys.ts";
 
@@ -51,7 +51,10 @@ export function hashSignedTransaction(signedTransaction: SignedTransaction): Has
 }
 
 /** Signs a transaction with a recoverable, low-S signature over its keccak-256 hash. */
-export function signTransaction(unsignedTransaction: UnsignedTransaction, privateKey: PrivateKey): SignedTransaction {
+export function signTransaction(
+  unsignedTransaction: UnsignedTransaction,
+  privateKey: PrivateKey,
+): SignedTransaction {
   const signature = secp256k1.sign(hashUnsignedTransaction(unsignedTransaction), privateKey, {
     prehash: false,
     format: "recovered",
@@ -72,8 +75,12 @@ export function recoverSender(signedTransaction: SignedTransaction): Address {
   if (secp256k1.Signature.fromBytes(signature, "recovered").hasHighS()) {
     throw new RangeError("signature has a high S value and is malleable");
   }
-  const compressedPublicKey = secp256k1.recoverPublicKey(signature, hashUnsignedTransaction(signedTransaction), {
-    prehash: false,
-  });
+  const compressedPublicKey = secp256k1.recoverPublicKey(
+    signature,
+    hashUnsignedTransaction(signedTransaction),
+    {
+      prehash: false,
+    },
+  );
   return deriveAddress(secp256k1.Point.fromBytes(compressedPublicKey).toBytes(false));
 }

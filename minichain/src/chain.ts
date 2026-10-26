@@ -7,7 +7,7 @@ import {
   checkTransactionsRoot,
   tryHashBlockHeader,
 } from "./block.ts";
-import { type Hash } from "./hash.ts";
+import type { Hash } from "./hash.ts";
 
 /** Why a chain was rejected: any block rule, or one of the two rules about the chain as a whole. */
 export type ChainInvalidReason = BlockInvalidReason | "empty-chain" | "genesis-hash-mismatch";
