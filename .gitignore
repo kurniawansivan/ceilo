@@ -1,0 +1,19 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.keystore
+keystore/
+
+# Foundry build output is ignored by contracts/.gitignore
+lcov.info
+
+# Node
+node_modules/
+dist/
+coverage/
+*.log
+
+# OS and local tooling
+.DS_Store
+.claude/settings.local.json
