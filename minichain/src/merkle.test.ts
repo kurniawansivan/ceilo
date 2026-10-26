@@ -12,7 +12,7 @@ import {
   type MerkleProofStep,
   verifyMerkleProof,
 } from "./merkle.ts";
-import { privateKeyWithValue } from "./testing.ts";
+import { elementAt, flipFirstBit, privateKeyWithValue } from "./testing.ts";
 import { hashSignedTransaction, signTransaction } from "./transaction.ts";
 
 /** Hashes a leaf exactly as the specification says, written independently of the implementation. */
@@ -21,13 +21,6 @@ const leafHashOf = (leaf: Uint8Array): Hash => hashOf(["ceilo/merkle-leaf", leaf
 /** Hashes an internal node exactly as the specification says, written independently. */
 const nodeHashOf = (leftHash: Hash, rightHash: Hash): Hash =>
   hashOf(["ceilo/merkle-node", leftHash, rightHash]);
-
-/** Returns the element at a position, failing the test if there is none. */
-const elementAt = <Element>(elements: readonly Element[], position: number): Element => {
-  const element = elements[position];
-  assert.ok(element !== undefined, `no element at position ${position}`);
-  return element;
-};
 
 /** Builds distinct, recognisable leaves: "leaf-0", "leaf-1" and so on. */
 const createLeaves = (count: number): Uint8Array[] => {
@@ -40,13 +33,6 @@ const createLeaves = (count: number): Uint8Array[] => {
 
 /** Hashes every leaf, so tests can spell out the expected tree shape by position. */
 const createLeafHashes = (count: number): Hash[] => createLeaves(count).map(leafHashOf);
-
-/** Returns a copy of the hash with its first bit flipped. */
-const flipFirstBit = (hash: Hash): Hash => {
-  const flippedHash = Uint8Array.from(hash);
-  flippedHash[0] = (flippedHash[0] ?? 0) ^ 0b0000_0001;
-  return flippedHash;
-};
 
 /** Returns the proof with one step partly replaced. */
 const replaceStep = (
