@@ -272,7 +272,10 @@ describe("createBlock", () => {
 
 describe("checkBlock", () => {
   test("accepts a block built by createBlock", () => {
-    assert.deepEqual(checkBlock(createValidChild(), genesisBlock.header), { valid: true });
+    assert.deepEqual(
+      checkBlock(createValidChild(), genesisBlock.header, genesisBlock.header.target),
+      { valid: true },
+    );
   });
 
   test("accepts a block that was mined to a moderate target", () => {
@@ -280,7 +283,22 @@ describe("checkBlock", () => {
     const nonce = findNonce(unmined.header, 0n, 10_000);
     assert.ok(nonce !== undefined);
 
-    assert.deepEqual(checkBlock(withHeader(unmined, { nonce }), parent.header), { valid: true });
+    assert.deepEqual(
+      checkBlock(withHeader(unmined, { nonce }), parent.header, parent.header.target),
+      { valid: true },
+    );
+  });
+
+  test("accepts a target different from the parent's when that is the one expected", () => {
+    const { parent, unmined } = createUnminedChildOfHardParent();
+    const easierTarget = MODERATE_TARGET * 2n;
+    const retargeted = withHeader(unmined, { target: easierTarget });
+    const nonce = findNonce(retargeted.header, 0n, 10_000);
+    assert.ok(nonce !== undefined);
+
+    assert.deepEqual(checkBlock(withHeader(retargeted, { nonce }), parent.header, easierTarget), {
+      valid: true,
+    });
   });
 
   test("accepts a block with no transactions", () => {
@@ -291,14 +309,20 @@ describe("checkBlock", () => {
       beneficiary: beneficiaryAddress,
       stateRoot: createPlaceholderStateRoot(),
     });
-    assert.deepEqual(checkBlock(emptyBlock, genesisBlock.header), { valid: true });
+    assert.deepEqual(checkBlock(emptyBlock, genesisBlock.header, genesisBlock.header.target), {
+      valid: true,
+    });
   });
 
   describe("rejects", () => {
     test("a height that is not the parent's plus one", () => {
       for (const wrongHeight of [0n, 2n, 5n]) {
         assert.deepEqual(
-          checkBlock(withHeader(createValidChild(), { height: wrongHeight }), genesisBlock.header),
+          checkBlock(
+            withHeader(createValidChild(), { height: wrongHeight }),
+            genesisBlock.header,
+            genesisBlock.header.target,
+          ),
           {
             valid: false,
             reason: "unexpected-height",
@@ -318,6 +342,7 @@ describe("checkBlock", () => {
           checkBlock(
             withHeader(createValidChild(), { previousBlockHash: wrongLink }),
             genesisBlock.header,
+            genesisBlock.header.target,
           ),
           { valid: false, reason: "previous-hash-mismatch" },
         );
@@ -330,6 +355,7 @@ describe("checkBlock", () => {
           checkBlock(
             withHeader(createValidChild(), { timestamp: wrongTimestamp }),
             genesisBlock.header,
+            genesisBlock.header.target,
           ),
           { valid: false, reason: "timestamp-not-increasing" },
         );
@@ -342,6 +368,7 @@ describe("checkBlock", () => {
         checkBlock(
           withHeader(createValidChild(), { transactionsRoot: alteredRoot }),
           genesisBlock.header,
+          genesisBlock.header.target,
         ),
         { valid: false, reason: "transactions-root-mismatch" },
       );
@@ -373,6 +400,7 @@ describe("checkBlock", () => {
             checkBlock(
               withTransactions(createValidChild(), tamperedTransactions),
               genesisBlock.header,
+              genesisBlock.header.target,
             ),
             {
               valid: false,
@@ -395,7 +423,11 @@ describe("checkBlock", () => {
       ];
       for (const malformedHeader of malformedHeaders) {
         assert.deepEqual(
-          checkBlock(withHeader(createValidChild(), malformedHeader), genesisBlock.header),
+          checkBlock(
+            withHeader(createValidChild(), malformedHeader),
+            genesisBlock.header,
+            genesisBlock.header.target,
+          ),
           {
             valid: false,
             reason: "malformed-header",
@@ -407,7 +439,11 @@ describe("checkBlock", () => {
     test("a header whose height is not a bigint, as untyped network input might be", () => {
       const untypedHeader = { height: 1 } as unknown as Partial<BlockHeader>;
       assert.deepEqual(
-        checkBlock(withHeader(createValidChild(), untypedHeader), genesisBlock.header),
+        checkBlock(
+          withHeader(createValidChild(), untypedHeader),
+          genesisBlock.header,
+          genesisBlock.header.target,
+        ),
         {
           valid: false,
           reason: "malformed-header",
@@ -417,7 +453,15 @@ describe("checkBlock", () => {
 
     test("a target that is not the parent's", () => {
       const block = withHeader(createValidChild(), { target: MAXIMUM_TARGET - 1n });
-      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+      assert.deepEqual(checkBlock(block, genesisBlock.header, genesisBlock.header.target), {
+        valid: false,
+        reason: "target-mismatch",
+      });
+    });
+
+    test("a target equal to the parent's when a different one is expected", () => {
+      const block = createValidChild();
+      assert.deepEqual(checkBlock(block, genesisBlock.header, genesisBlock.header.target - 1n), {
         valid: false,
         reason: "target-mismatch",
       });
@@ -425,7 +469,7 @@ describe("checkBlock", () => {
 
     test("a nonce that does not reach the target", () => {
       const { parent, unmined } = createUnminedChildOfHardParent();
-      assert.deepEqual(checkBlock(withFailingNonce(unmined), parent.header), {
+      assert.deepEqual(checkBlock(withFailingNonce(unmined), parent.header, parent.header.target), {
         valid: false,
         reason: "insufficient-work",
       });
@@ -438,6 +482,7 @@ describe("checkBlock", () => {
         checkBlock(
           withTransactions(createValidChild(), [malformedTransaction]),
           genesisBlock.header,
+          genesisBlock.header.target,
         ),
         {
           valid: false,
@@ -454,7 +499,10 @@ describe("checkBlock", () => {
         throw new Error("unexpected failure");
       },
     };
-    assert.throws(() => checkBlock(hostileBlock, genesisBlock.header), /unexpected failure/);
+    assert.throws(
+      () => checkBlock(hostileBlock, genesisBlock.header, genesisBlock.header.target),
+      /unexpected failure/,
+    );
   });
 
   describe("reports the first broken rule when several are broken", () => {
@@ -463,7 +511,7 @@ describe("checkBlock", () => {
         timestamp: GENESIS_TIMESTAMP,
         target: MAXIMUM_TARGET - 1n,
       });
-      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+      assert.deepEqual(checkBlock(block, genesisBlock.header, genesisBlock.header.target), {
         valid: false,
         reason: "timestamp-not-increasing",
       });
@@ -472,7 +520,7 @@ describe("checkBlock", () => {
     test("a target mismatch comes before insufficient work", () => {
       const { parent, unmined } = createUnminedChildOfHardParent();
       const block = withFailingNonce(withHeader(unmined, { target: 1n }));
-      assert.deepEqual(checkBlock(block, parent.header), {
+      assert.deepEqual(checkBlock(block, parent.header, parent.header.target), {
         valid: false,
         reason: "target-mismatch",
       });
@@ -483,7 +531,7 @@ describe("checkBlock", () => {
       const block = withFailingNonce(
         withHeader(unmined, { transactionsRoot: flipFirstBit(unmined.header.transactionsRoot) }),
       );
-      assert.deepEqual(checkBlock(block, parent.header), {
+      assert.deepEqual(checkBlock(block, parent.header, parent.header.target), {
         valid: false,
         reason: "insufficient-work",
       });
@@ -491,7 +539,7 @@ describe("checkBlock", () => {
 
     test("a malformed header comes before a wrong height", () => {
       const block = withHeader(createValidChild(), { height: 9n, beneficiary: new Uint8Array(19) });
-      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+      assert.deepEqual(checkBlock(block, genesisBlock.header, genesisBlock.header.target), {
         valid: false,
         reason: "malformed-header",
       });
@@ -502,7 +550,7 @@ describe("checkBlock", () => {
         height: 9n,
         previousBlockHash: new Uint8Array(32),
       });
-      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+      assert.deepEqual(checkBlock(block, genesisBlock.header, genesisBlock.header.target), {
         valid: false,
         reason: "unexpected-height",
       });
@@ -513,7 +561,7 @@ describe("checkBlock", () => {
         previousBlockHash: new Uint8Array(32),
         timestamp: GENESIS_TIMESTAMP,
       });
-      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+      assert.deepEqual(checkBlock(block, genesisBlock.header, genesisBlock.header.target), {
         valid: false,
         reason: "previous-hash-mismatch",
       });
@@ -524,7 +572,7 @@ describe("checkBlock", () => {
         timestamp: GENESIS_TIMESTAMP,
         transactionsRoot: new Uint8Array(32),
       });
-      assert.deepEqual(checkBlock(block, genesisBlock.header), {
+      assert.deepEqual(checkBlock(block, genesisBlock.header, genesisBlock.header.target), {
         valid: false,
         reason: "timestamp-not-increasing",
       });

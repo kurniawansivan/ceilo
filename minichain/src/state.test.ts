@@ -871,7 +871,9 @@ describe("produceBlock", () => {
     });
     assert.ok(production.valid);
 
-    assert.deepEqual(checkBlock(block, genesis.block.header), { valid: true });
+    assert.deepEqual(checkBlock(block, genesis.block.header, genesis.block.header.target), {
+      valid: true,
+    });
     const applied = applyBlock(initialState, block);
     assert.ok(applied.valid);
     assert.deepEqual(computeStateRoot(applied.state), computeStateRoot(production.state));
@@ -903,6 +905,23 @@ describe("produceBlock", () => {
         }),
       RangeError,
     );
+  });
+
+  test("uses the parent's target unless another is requested, and leaves the block unmined", () => {
+    const request = {
+      parentState: initialState,
+      parentHeader: genesis.block.header,
+      transactions,
+      timestamp: GENESIS_TIMESTAMP + 10n,
+      beneficiary: addressOfAccount(CAROL),
+    };
+    const inherited = produceBlock(request);
+    const requested = produceBlock({ ...request, target: MAXIMUM_TARGET - 5n });
+
+    assert.ok(inherited.valid && requested.valid);
+    assert.equal(inherited.block.header.target, genesis.block.header.target);
+    assert.equal(inherited.block.header.nonce, 0n);
+    assert.equal(requested.block.header.target, MAXIMUM_TARGET - 5n);
   });
 
   test("leaves the parent state untouched", () => {

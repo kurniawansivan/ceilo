@@ -160,8 +160,12 @@ export function checkTransactionsRoot(block: Block): BlockCheck {
   return { valid: true };
 }
 
-/** Checks a block against its parent, reporting the first rule it breaks. */
-export function checkBlock(block: Block, parentHeader: BlockHeader): BlockCheck {
+/** Checks a block against its parent and the target it must have, reporting the first rule it breaks. */
+export function checkBlock(
+  block: Block,
+  parentHeader: BlockHeader,
+  expectedTarget: bigint,
+): BlockCheck {
   const { header } = block;
   const headerHash = tryHashBlockHeader(header);
   if (headerHash === undefined) {
@@ -176,7 +180,7 @@ export function checkBlock(block: Block, parentHeader: BlockHeader): BlockCheck 
   if (header.timestamp <= parentHeader.timestamp) {
     return reject("timestamp-not-increasing");
   }
-  if (header.target !== parentHeader.target) {
+  if (header.target !== expectedTarget) {
     return reject("target-mismatch");
   }
   // Checked before the transactions, so a block with no real work behind it is cheap to refuse.

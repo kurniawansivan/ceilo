@@ -1,5 +1,6 @@
 import { type Block, createBlock, hashBlockHeader } from "./block.ts";
 import { checkChain, replayChain } from "./chain.ts";
+import type { ConsensusRules } from "./consensus.ts";
 import { type Hash, toHexadecimal } from "./hash.ts";
 import { type Address, deriveAddress, derivePublicKey, type PrivateKey } from "./keys.ts";
 import {
@@ -25,6 +26,15 @@ const ATTACKED_BLOCK_INDEX = 2;
 const ALICE_ALLOCATION = 1_000n;
 const BOB_ALLOCATION = 500n;
 const INFLATION_CLAIMED_BY_LIAR = 1_000n;
+
+/** Rules for the demonstration chain: no work is required and difficulty never changes. */
+const DEMO_RULES: ConsensusRules = {
+  targetBlockIntervalInSeconds: BLOCK_INTERVAL_IN_SECONDS,
+  retargetWindowInBlocks: 1_000_000n,
+  maximumTarget: MAXIMUM_TARGET,
+  maximumAdjustmentFactor: 4n,
+  futureTimeLimitInSeconds: 30n,
+};
 
 /** Where a bad chain or transaction was stopped, from the earliest layer to "never". */
 export type DetectionLayer =
@@ -230,14 +240,14 @@ function inflateFirstTransaction(block: Block): SignedTransaction[] {
 
 /** Runs the structural check, then the replay, and reports the first layer that stops the chain. */
 function detectChainFault(chain: readonly Block[], honest: HonestChain): Outcome {
-  const structure = checkChain(chain, honest.genesisHash);
+  const structure = checkChain(chain, honest.genesisHash, DEMO_RULES);
   if (!structure.valid) {
     return {
       detectedBy: "chain structure",
       reason: `${structure.reason} at block ${structure.blockIndex}`,
     };
   }
-  const replay = replayChain(chain, honest.genesisHash, elementAt(honest.states, 0));
+  const replay = replayChain(chain, honest.genesisHash, elementAt(honest.states, 0), DEMO_RULES);
   if (!replay.valid) {
     return { detectedBy: "state replay", reason: `${replay.reason} at block ${replay.blockIndex}` };
   }
@@ -401,7 +411,12 @@ function runTransactionScenarios(honest: HonestChain): ScenarioResult[] {
 /** Summarises the honest chain: its blocks, who holds what, and whether the supply stayed fixed. */
 function summariseChain(honest: HonestChain): ChainOverview {
   const finalState = elementAt(honest.states, honest.states.length - 1);
-  const replay = replayChain(honest.chain, honest.genesisHash, elementAt(honest.states, 0));
+  const replay = replayChain(
+    honest.chain,
+    honest.genesisHash,
+    elementAt(honest.states, 0),
+    DEMO_RULES,
+  );
   return {
     genesisHash: honest.genesisHash,
     blocks: honest.chain.map((block) => ({

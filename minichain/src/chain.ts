@@ -7,11 +7,16 @@ import {
   checkTransactionsRoot,
   tryHashBlockHeader,
 } from "./block.ts";
+import { type ConsensusRules, computeExpectedTarget, validateConsensusRules } from "./consensus.ts";
 import type { Hash } from "./hash.ts";
 import { applyBlock, type ChainState, type TransactionRejection } from "./state.ts";
 
 /** Why a chain was rejected: any block rule, or one of the two rules about the chain as a whole. */
-export type ChainInvalidReason = BlockInvalidReason | "empty-chain" | "genesis-hash-mismatch";
+export type ChainInvalidReason =
+  | BlockInvalidReason
+  | "empty-chain"
+  | "genesis-hash-mismatch"
+  | "genesis-target-too-easy";
 
 /** Why a replay failed: a structural fault, a bad transaction, or a state root that is not the result. */
 export type ChainReplayReason = ChainInvalidReason | TransactionRejection | "state-root-mismatch";
@@ -39,8 +44,13 @@ function reject(blockIndex: number, reason: ChainInvalidReason): ChainCheck {
   return { valid: false, blockIndex, reason };
 }
 
-/** Checks every block from the genesis block up, naming the first block that breaks a rule. */
-export function checkChain(chain: readonly Block[], expectedGenesisHash: Hash): ChainCheck {
+/** Checks every block from the genesis block up under the rules, naming the first block that breaks one. */
+export function checkChain(
+  chain: readonly Block[],
+  expectedGenesisHash: Hash,
+  rules: ConsensusRules,
+): ChainCheck {
+  validateConsensusRules(rules);
   const [genesisBlock] = chain;
   if (genesisBlock === undefined) {
     return reject(0, "empty-chain");
@@ -53,6 +63,9 @@ export function checkChain(chain: readonly Block[], expectedGenesisHash: Hash): 
   if (!equalBytes(genesisHash, expectedGenesisHash)) {
     return reject(0, "genesis-hash-mismatch");
   }
+  if (genesisBlock.header.target > rules.maximumTarget) {
+    return reject(0, "genesis-target-too-easy");
+  }
   const genesisTransactionsCheck = checkTransactionsRoot(genesisBlock);
   if (!genesisTransactionsCheck.valid) {
     return reject(0, genesisTransactionsCheck.reason);
@@ -60,7 +73,12 @@ export function checkChain(chain: readonly Block[], expectedGenesisHash: Hash): 
 
   let parentHeader = genesisBlock.header;
   for (const [offset, block] of chain.slice(1).entries()) {
-    const blockCheck = checkBlock(block, parentHeader);
+    const expectedTarget = computeExpectedTarget(
+      rules,
+      parentHeader,
+      (height) => chain[Number(height)]?.header,
+    );
+    const blockCheck = checkBlock(block, parentHeader, expectedTarget);
     if (!blockCheck.valid) {
       return reject(offset + 1, blockCheck.reason);
     }
@@ -74,8 +92,9 @@ export function replayChain(
   chain: readonly Block[],
   expectedGenesisHash: Hash,
   genesisState: ChainState,
+  rules: ConsensusRules,
 ): ChainReplay {
-  const structure = checkChain(chain, expectedGenesisHash);
+  const structure = checkChain(chain, expectedGenesisHash, rules);
   if (!structure.valid) {
     return structure;
   }

@@ -82,6 +82,8 @@ export type BlockProductionRequest = {
   readonly transactions: readonly SignedTransaction[];
   readonly timestamp: bigint;
   readonly beneficiary: Address;
+  /** The target the block must meet; the parent's target if left out. */
+  readonly target?: bigint;
 };
 
 /** The outcome of producing a block: the block with the state it leaves, or the first bad transaction. */
@@ -363,6 +365,7 @@ export function produceBlock(request: BlockProductionRequest): BlockProduction {
     timestamp: request.timestamp,
     beneficiary: request.beneficiary,
     stateRoot: computeStateRoot(applied.state),
+    ...(request.target === undefined ? {} : { target: request.target }),
   });
   return { valid: true, block, state: applied.state };
 }
