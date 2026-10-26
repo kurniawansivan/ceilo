@@ -38,6 +38,7 @@ Roadmap, definition of done and stage gates: `docs/roadmap.md`. Why each decisio
 - Conventional Commits. Short-lived branches, PR into `main`.
 - CI must be green to merge: `forge fmt --check`, `forge test`, coverage of at least 90% (line and branch) on policy modules, Slither with no unaddressed high or medium findings.
 - Solhint clean.
+- TypeScript packages: CI runs `biome check`, `tsc --noEmit` and the tests.
 
 ## Learning protocol
 
