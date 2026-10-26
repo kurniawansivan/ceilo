@@ -14,3 +14,4 @@ Status: accepted, 2026-10-26.
 
 - Bumping any pin is a deliberate commit that records the reason.
 - Every Solidity file in `src/` and `test/` carries the exact pragma.
+- The Slither job runs inside its action's container, which installs its own Foundry (1.5.1 stable on the first run), so the Foundry pin does not apply there. It is skipped until `contracts/src/` holds a contract.

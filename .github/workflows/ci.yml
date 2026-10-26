@@ -37,10 +37,10 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
-      - uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: v1.8.6
-      - uses: crytic/slither-action@b52cc1cbfee9ca3e8722dd5224299d16c9a6b80f # v0.4.2
+      # Slither needs at least one contract in src/ to produce build info.
+      # hashFiles() is only available at step level, not in a job-level `if`.
+      - if: hashFiles('contracts/src/**/*.sol') != ''
+        uses: crytic/slither-action@b52cc1cbfee9ca3e8722dd5224299d16c9a6b80f # v0.4.2
         with:
           target: contracts/
           fail-on: medium
