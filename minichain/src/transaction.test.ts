@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { numberToBytesBE } from "@noble/curves/utils.js";
 
 import { hashOf } from "./hash.ts";
 import { type Address, deriveAddress, derivePublicKey } from "./keys.ts";
@@ -49,6 +50,10 @@ const tryRecoverSender = (signedTransaction: SignedTransaction): Address | undef
     return undefined;
   }
 };
+
+/** Builds a recoverable signature with recovery byte 0 from raw r and s values. */
+const signatureFrom = (r: bigint, s: bigint): Uint8Array =>
+  Uint8Array.from([0, ...numberToBytesBE(r, 32), ...numberToBytesBE(s, 32)]);
 
 /** Builds the mathematically valid high-S twin of a low-S signature. */
 const toHighSTwinSignature = (signature: Uint8Array): Uint8Array => {
@@ -148,11 +153,23 @@ describe("recoverSender rejects", () => {
     }
   });
 
-  test("an all-zero signature", () => {
+  test("a signature whose r or s is out of range, as a RangeError and not a library error", () => {
     const signedTransaction = signTransaction(createUnsignedTransaction(), senderPrivateKey);
-    assert.throws(() =>
-      recoverSender({ ...signedTransaction, signature: new Uint8Array(SIGNATURE_LENGTH) }),
-    );
+    const curveOrder = secp256k1.Point.Fn.ORDER;
+    const outOfRangeSignatures: Record<string, Uint8Array> = {
+      "all zero": new Uint8Array(SIGNATURE_LENGTH),
+      "r equal to the curve order": signatureFrom(curveOrder, 1n),
+      "s equal to the curve order": signatureFrom(1n, curveOrder),
+      "every byte 0xff": Uint8Array.from([0, ...new Uint8Array(SIGNATURE_LENGTH - 1).fill(0xff)]),
+    };
+
+    for (const [description, signature] of Object.entries(outOfRangeSignatures)) {
+      assert.throws(
+        () => recoverSender({ ...signedTransaction, signature }),
+        RangeError,
+        description,
+      );
+    }
   });
 });
 

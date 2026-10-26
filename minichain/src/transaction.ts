@@ -62,7 +62,16 @@ export function signTransaction(
   return { ...unsignedTransaction, signature };
 }
 
-/** Recovers the sender's address from the signature, throwing if the signature is malformed or malleable. */
+/** Runs a signature library call, turning its plain Error for invalid input into a RangeError. */
+function callSignatureLibrary<Result>(call: () => Result): Result {
+  try {
+    return call();
+  } catch (error) {
+    throw new RangeError("signature is not a valid recoverable signature", { cause: error });
+  }
+}
+
+/** Recovers the sender's address from the signature, throwing a RangeError if it is invalid. */
 export function recoverSender(signedTransaction: SignedTransaction): Address {
   const { signature } = signedTransaction;
   if (signature.length !== SIGNATURE_LENGTH) {
@@ -71,16 +80,18 @@ export function recoverSender(signedTransaction: SignedTransaction): Address {
   if (signature[0] !== 0 && signature[0] !== 1) {
     throw new RangeError("recovery byte must be 0 or 1");
   }
+  const parsedSignature = callSignatureLibrary(() =>
+    secp256k1.Signature.fromBytes(signature, "recovered"),
+  );
   // Recovery accepts both the low-S and high-S form of a signature, so one transaction would get two valid signatures.
-  if (secp256k1.Signature.fromBytes(signature, "recovered").hasHighS()) {
+  if (parsedSignature.hasHighS()) {
     throw new RangeError("signature has a high S value and is malleable");
   }
-  const compressedPublicKey = secp256k1.recoverPublicKey(
-    signature,
-    hashUnsignedTransaction(signedTransaction),
-    {
-      prehash: false,
-    },
+  const messageHash = hashUnsignedTransaction(signedTransaction);
+  const uncompressedPublicKey = callSignatureLibrary(() =>
+    secp256k1.Point.fromBytes(
+      secp256k1.recoverPublicKey(signature, messageHash, { prehash: false }),
+    ).toBytes(false),
   );
-  return deriveAddress(secp256k1.Point.fromBytes(compressedPublicKey).toBytes(false));
+  return deriveAddress(uncompressedPublicKey);
 }
