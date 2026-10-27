@@ -9,6 +9,9 @@ import { MAXIMUM_NONCE, MAXIMUM_TARGET, meetsTarget } from "./work.ts";
 
 const BLOCK_HEADER_DOMAIN = "ceilo/block-header";
 
+/** The most transactions one block may carry, so no block is too big to check or to pass along. */
+export const MAXIMUM_TRANSACTIONS_PER_BLOCK = 100;
+
 /** Where a block sits, what it links to, what it contains, the state it leaves and who earns its fees. */
 export type BlockHeader = {
   readonly height: bigint;
@@ -39,6 +42,7 @@ export type BlockInvalidReason =
   | "timestamp-not-increasing"
   | "target-mismatch"
   | "insufficient-work"
+  | "too-many-transactions"
   | "malformed-transaction"
   | "transactions-root-mismatch";
 
@@ -186,6 +190,10 @@ export function checkBlock(
   // Checked before the transactions, so a block with no real work behind it is cheap to refuse.
   if (!meetsTarget(headerHash, header.target)) {
     return reject("insufficient-work");
+  }
+  // Checked before the transactions are hashed, so an oversized block costs little to refuse.
+  if (block.transactions.length > MAXIMUM_TRANSACTIONS_PER_BLOCK) {
+    return reject("too-many-transactions");
   }
   return checkTransactionsRoot(block);
 }

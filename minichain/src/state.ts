@@ -58,6 +58,11 @@ export type TransactionRejection =
   | "nonce-mismatch"
   | "insufficient-balance";
 
+/** The outcome of checking a transaction that is not applied: who sent it, or the reason it was rejected. */
+export type TransactionPoolCheck =
+  | { readonly valid: true; readonly sender: Address }
+  | { readonly valid: false; readonly reason: TransactionRejection };
+
 /** The outcome of applying a transaction: the new state, or the reason it was rejected. */
 export type TransactionApplication =
   | { readonly valid: true; readonly state: ChainState }
@@ -166,15 +171,18 @@ function isWellFormed(transaction: SignedTransaction): boolean {
   );
 }
 
-/** Checks a transaction against the accounts and applies it if it passes, else returns why not. */
-function applyToAccounts(
-  accounts: Map<string, Account>,
+/** Adds what a transaction moves out of its sender: the amount and the fee. */
+function computeTotalCost(transaction: SignedTransaction): bigint {
+  return transaction.amount + transaction.fee;
+}
+
+/** Checks the rules that need no account, in order, and names the sender when the signature holds. */
+function checkStandaloneRules(
   chainIdentifier: bigint,
   transaction: SignedTransaction,
-  beneficiary: Address,
-): TransactionRejection | undefined {
+): TransactionPoolCheck {
   if (!isWellFormed(transaction)) {
-    return "malformed-transaction";
+    return { valid: false, reason: "malformed-transaction" };
   }
   const values = [
     transaction.chainIdentifier,
@@ -183,23 +191,38 @@ function applyToAccounts(
     transaction.fee,
   ];
   if (!values.every((value) => isInRange(value))) {
-    return "value-out-of-range";
+    return { valid: false, reason: "value-out-of-range" };
   }
   if (transaction.chainIdentifier !== chainIdentifier) {
-    return "wrong-chain";
+    return { valid: false, reason: "wrong-chain" };
   }
   if (transaction.fee < MINIMUM_FEE) {
-    return "fee-too-low";
+    return { valid: false, reason: "fee-too-low" };
   }
   const sender = tryCompute(() => recoverSender(transaction));
   if (sender === undefined) {
-    return "invalid-signature";
+    return { valid: false, reason: "invalid-signature" };
   }
+  return { valid: true, sender };
+}
+
+/** Checks a transaction against the accounts and applies it if it passes, else returns why not. */
+function applyToAccounts(
+  accounts: Map<string, Account>,
+  chainIdentifier: bigint,
+  transaction: SignedTransaction,
+  beneficiary: Address,
+): TransactionRejection | undefined {
+  const standalone = checkStandaloneRules(chainIdentifier, transaction);
+  if (!standalone.valid) {
+    return standalone.reason;
+  }
+  const { sender } = standalone;
   const senderAccount = readAccount(accounts, sender);
   if (transaction.nonce !== senderAccount.nonce) {
     return "nonce-mismatch";
   }
-  const totalCost = transaction.amount + transaction.fee;
+  const totalCost = computeTotalCost(transaction);
   if (senderAccount.balance < totalCost) {
     return "insufficient-balance";
   }
@@ -268,6 +291,25 @@ export function applyTransaction(
     return { valid: false, reason };
   }
   return { valid: true, state: { ...state, accounts } };
+}
+
+/** Checks a transaction a pool may hold: valid now, or waiting for earlier nonces, without applying it. */
+export function checkTransactionForPool(
+  state: ChainState,
+  transaction: SignedTransaction,
+): TransactionPoolCheck {
+  const standalone = checkStandaloneRules(state.chainIdentifier, transaction);
+  if (!standalone.valid) {
+    return standalone;
+  }
+  const senderAccount = readAccount(state.accounts, standalone.sender);
+  if (transaction.nonce < senderAccount.nonce) {
+    return { valid: false, reason: "nonce-mismatch" };
+  }
+  if (senderAccount.balance < computeTotalCost(transaction)) {
+    return { valid: false, reason: "insufficient-balance" };
+  }
+  return standalone;
 }
 
 /** Applies a block's transactions to a copy of the state, all or none, then pays the beneficiary the reward. */

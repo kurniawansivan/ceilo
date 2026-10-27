@@ -9,6 +9,7 @@ import {
   createBlock,
   createGenesisBlock,
   hashBlockHeader,
+  MAXIMUM_TRANSACTIONS_PER_BLOCK,
 } from "./block.ts";
 import { hashOf } from "./hash.ts";
 import { deriveAddress, derivePublicKey } from "./keys.ts";
@@ -70,6 +71,18 @@ const withFailingNonce = (block: Block): Block => {
   }
   return assert.fail("every nonce tried met the target, so none can fail it");
 };
+
+/** Builds a block on the genesis block carrying the given number of distinct signed transactions. */
+const createOversizedBlock = (transactionCount: number): Block =>
+  createBlock({
+    parentHeader: genesisBlock.header,
+    transactions: Array.from({ length: transactionCount }, (_value, index) =>
+      createSignedTransactionWithNonce(BigInt(index)),
+    ),
+    timestamp: GENESIS_TIMESTAMP + 10n,
+    beneficiary: beneficiaryAddress,
+    stateRoot: createPlaceholderStateRoot(),
+  });
 
 /** Returns the block with different transactions and its header untouched. */
 const withTransactions = (block: Block, transactions: readonly SignedTransaction[]): Block => ({
@@ -302,6 +315,13 @@ describe("checkBlock", () => {
     });
   });
 
+  test("accepts a block with exactly the most transactions a block may carry", () => {
+    const full = createOversizedBlock(MAXIMUM_TRANSACTIONS_PER_BLOCK);
+    assert.deepEqual(checkBlock(full, genesisBlock.header, genesisBlock.header.target), {
+      valid: true,
+    });
+  });
+
   test("accepts a block with no transactions", () => {
     const emptyBlock = createBlock({
       parentHeader: genesisBlock.header,
@@ -476,6 +496,14 @@ describe("checkBlock", () => {
       });
     });
 
+    test("more transactions than a block may carry", () => {
+      const oversized = createOversizedBlock(MAXIMUM_TRANSACTIONS_PER_BLOCK + 1);
+      assert.deepEqual(checkBlock(oversized, genesisBlock.header, genesisBlock.header.target), {
+        valid: false,
+        reason: "too-many-transactions",
+      });
+    });
+
     test("a transaction that cannot be hashed", () => {
       const firstTransaction = elementAt(signedTransactions, 0);
       const malformedTransaction = { ...firstTransaction, recipient: new Uint8Array(19) };
@@ -516,6 +544,35 @@ describe("checkBlock", () => {
         valid: false,
         reason: "timestamp-not-increasing",
       });
+    });
+
+    test("too many transactions come before a wrong transactions root, which is dearer to check", () => {
+      const oversized = createOversizedBlock(MAXIMUM_TRANSACTIONS_PER_BLOCK + 1);
+      const wrongRoot = withHeader(oversized, {
+        transactionsRoot: flipFirstBit(oversized.header.transactionsRoot),
+      });
+      assert.deepEqual(checkBlock(wrongRoot, genesisBlock.header, genesisBlock.header.target), {
+        valid: false,
+        reason: "too-many-transactions",
+      });
+    });
+
+    test("insufficient work comes before too many transactions", () => {
+      const { parent } = createUnminedChildOfHardParent();
+      const oversized = createBlock({
+        parentHeader: parent.header,
+        transactions: createOversizedBlock(MAXIMUM_TRANSACTIONS_PER_BLOCK + 1).transactions,
+        timestamp: GENESIS_TIMESTAMP + 10n,
+        beneficiary: beneficiaryAddress,
+        stateRoot: createPlaceholderStateRoot(),
+      });
+      assert.deepEqual(
+        checkBlock(withFailingNonce(oversized), parent.header, parent.header.target),
+        {
+          valid: false,
+          reason: "insufficient-work",
+        },
+      );
     });
 
     test("a target mismatch comes before insufficient work", () => {

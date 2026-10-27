@@ -16,6 +16,7 @@ import {
   applyBlock,
   applyTransaction,
   type ChainState,
+  checkTransactionForPool,
   computeStateRoot,
   computeTotalSupply,
   createAccountProof,
@@ -284,6 +285,72 @@ describe("applyTransaction accepts", () => {
   test("any transfer without changing the total supply", () => {
     const state = applyAccepted(initialState, signTransfer(aliceToBob()));
     assert.equal(computeTotalSupply(state), INITIAL_SUPPLY);
+  });
+});
+
+describe("checkTransactionForPool", () => {
+  test("accepts a valid transaction and names its sender", () => {
+    assert.deepEqual(checkTransactionForPool(initialState, signTransfer(aliceToBob())), {
+      valid: true,
+      sender: addressOfAccount(ALICE),
+    });
+  });
+
+  test("lets a nonce ahead of the account wait its turn", () => {
+    const result = checkTransactionForPool(initialState, signTransfer(aliceToBob({ nonce: 5n })));
+    assert.deepEqual(result, { valid: true, sender: addressOfAccount(ALICE) });
+  });
+
+  test("rejects a nonce the account has already used", () => {
+    const afterOne = applyAccepted(initialState, signTransfer(aliceToBob({ nonce: 0n })));
+    assert.deepEqual(checkTransactionForPool(afterOne, signTransfer(aliceToBob({ nonce: 0n }))), {
+      valid: false,
+      reason: "nonce-mismatch",
+    });
+    assert.equal(
+      checkTransactionForPool(afterOne, signTransfer(aliceToBob({ nonce: 1n }))).valid,
+      true,
+    );
+  });
+
+  test("rejects for the same reasons applyTransaction does, in the same order", () => {
+    const signed = signTransfer(aliceToBob());
+    const cases: Record<string, [SignedTransaction, TransactionRejection]> = {
+      "a recipient of the wrong length": [
+        { ...signed, recipient: new Uint8Array(19) },
+        "malformed-transaction",
+      ],
+      "a negative amount": [{ ...signed, amount: -1n }, "value-out-of-range"],
+      "another chain": [signTransfer(aliceToBob({ chainIdentifier: 1338n })), "wrong-chain"],
+      "a fee below the minimum": [signTransfer(aliceToBob({ fee: 0n })), "fee-too-low"],
+      "a garbage signature": [{ ...signed, signature: new Uint8Array(65) }, "invalid-signature"],
+      "a sender without funds": [signTransfer(aliceToBob({ from: DAVE })), "insufficient-balance"],
+    };
+
+    for (const [description, [transaction, reason]] of Object.entries(cases)) {
+      assert.deepEqual(
+        checkTransactionForPool(initialState, transaction),
+        { valid: false, reason },
+        description,
+      );
+    }
+  });
+
+  test("checks affordability for the transaction alone, not for those before it", () => {
+    const farAhead = signTransfer(aliceToBob({ nonce: 3n, amount: ALICE_BALANCE - 3n, fee: 3n }));
+    assert.equal(checkTransactionForPool(initialState, farAhead).valid, true);
+
+    const tooDear = signTransfer(aliceToBob({ nonce: 3n, amount: ALICE_BALANCE - 2n, fee: 3n }));
+    assert.deepEqual(checkTransactionForPool(initialState, tooDear), {
+      valid: false,
+      reason: "insufficient-balance",
+    });
+  });
+
+  test("leaves the state untouched", () => {
+    const snapshotBefore = snapshotOf(initialState);
+    checkTransactionForPool(initialState, signTransfer(aliceToBob()));
+    assert.equal(snapshotOf(initialState), snapshotBefore);
   });
 });
 
