@@ -35,7 +35,7 @@ contract CallContextTest is Test {
     }
 
     /// @notice A staticcall to a function that writes state fails, burns all the gas it was given, and changes nothing.
-    function test_StaticcallRefusesToWriteState() public {
+    function test_StaticcallRefusesToWriteState() public view {
         uint256 gasBefore = gasleft();
         bool succeeded = callerLab.viaStaticcall(5);
         uint256 gasConsumed = gasBefore - gasleft();

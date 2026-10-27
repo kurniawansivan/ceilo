@@ -16,7 +16,7 @@ contract DispatchTest is Test {
     }
 
     /// @notice A selector is the first four bytes of the keccak-256 hash of the function signature.
-    function test_SelectorIsTheFirstFourBytesOfTheSignatureHash() public view {
+    function test_SelectorIsTheFirstFourBytesOfTheSignatureHash() public pure {
         assertEq(DispatchLab.add.selector, bytes4(keccak256("add(uint256,uint256)")));
     }
 
@@ -30,7 +30,7 @@ contract DispatchTest is Test {
     }
 
     /// @notice A call is the selector followed by each argument padded to a 32-byte word.
-    function test_CallDataIsTheSelectorThenOneWordPerArgument() public view {
+    function test_CallDataIsTheSelectorThenOneWordPerArgument() public pure {
         bytes memory callData = abi.encodeCall(DispatchLab.add, (20, 22));
 
         assertEq(callData.length, 4 + 32 + 32);
