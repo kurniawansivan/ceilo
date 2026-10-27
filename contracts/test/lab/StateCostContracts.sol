@@ -208,6 +208,7 @@ contract MemoryCostLab {
 
 /// @notice Emits logs with a chosen number of topics and bytes of data and reports what each cost.
 contract EventCostLab {
+    /// @notice Announces tokens moving from one address to another, shaped like the ERC-20 event.
     event Transfer(address indexed from, address indexed to, uint256 value);
 
     /// @notice Emits five logs of one word of data, with zero to four topics, and reports the gas of each.

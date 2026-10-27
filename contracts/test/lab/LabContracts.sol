@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 /// @notice A contract with one function and a fallback, to show how calldata is matched to code.
 contract DispatchLab {
+    /// @notice How many calls reached the fallback.
     uint256 public fallbackCallCount;
 
     /// @notice Adds two numbers, with Solidity's overflow check.
@@ -28,7 +29,9 @@ contract StrictLab {
 contract RollbackLab {
     error Boom(uint256 code);
 
+    /// @notice The last value a call kept.
     uint256 public value;
+    /// @notice Whether a caller caught a revert.
     bool public caught;
 
     /// @notice Writes one to the value and then reverts, so the write must not survive.
@@ -60,7 +63,9 @@ contract RollbackLab {
 
 /// @notice Logic that records a value and who called it, to be reached by call, delegatecall and staticcall.
 contract LogicLab {
+    /// @notice The last value recorded.
     uint256 public value;
+    /// @notice The address that last recorded a value.
     address public lastCaller;
 
     /// @notice Stores a value and the address that called this function.
@@ -77,7 +82,9 @@ contract LogicLab {
 
 /// @notice Reaches LogicLab three ways; its storage layout matches LogicLab's, slot for slot.
 contract CallerLab {
+    /// @notice The last value recorded in this contract's own storage.
     uint256 public value;
+    /// @notice The address that last recorded a value in this contract's own storage.
     address public lastCaller;
     uint256 internal constant STATICCALL_GAS = 100_000;
     address internal immutable LOGIC;
@@ -115,7 +122,9 @@ contract CallerLab {
 
 /// @notice Delegatecalls LogicLab with a different storage layout, so the logic's writes land on the wrong variables.
 contract MismatchedCallerLab {
+    /// @notice Declared first, so it shares a slot with the value the logic contract writes.
     address public owner;
+    /// @notice Declared second, so it shares a slot with the caller the logic contract records.
     uint256 public counter;
     address internal immutable LOGIC;
 
