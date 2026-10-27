@@ -204,6 +204,7 @@ describe("createGenesisBlock", () => {
   });
 
   test("is deterministic, and a different timestamp, state root or target makes a different chain", () => {
+    /** Hashes the genesis block that a timestamp, state root and target would make. */
     const hashWith = (timestamp: bigint, stateRoot: Uint8Array, target = MAXIMUM_TARGET) =>
       hashBlockHeader(createGenesisBlock({ timestamp, stateRoot, target }).header);
     const stateRoot = createPlaceholderStateRoot();

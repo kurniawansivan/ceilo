@@ -179,6 +179,7 @@ describe("createGenesisState", () => {
   });
 
   test("rejects balances and chain identifiers outside the allowed range", () => {
+    /** Builds a genesis allocation that gives Alice the balance. */
     const allocationOf = (balance: bigint) => [{ address: addressOfAccount(ALICE), balance }];
     assert.throws(() => createGenesisState(CHAIN_IDENTIFIER, allocationOf(-1n)), RangeError);
     assert.throws(
@@ -813,6 +814,7 @@ describe("createGenesis", () => {
   });
 
   test("gives a genesis hash that depends on the allocations and the chain identifier", () => {
+    /** Hashes the genesis block of a chain whose only coins belong to Alice. */
     const genesisHashOf = (chainIdentifier: bigint, aliceBalance: bigint) =>
       hashBlockHeader(
         createGenesis({
