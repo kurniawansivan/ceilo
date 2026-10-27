@@ -1,0 +1,11 @@
+{
+  "name": "ceilo-contracts",
+  "private": true,
+  "description": "Linting for the Solidity contracts; the contracts themselves build with Foundry.",
+  "scripts": {
+    "lint": "solhint 'src/**/*.sol' 'test/**/*.sol'"
+  },
+  "devDependencies": {
+    "solhint": "6.2.3"
+  }
+}

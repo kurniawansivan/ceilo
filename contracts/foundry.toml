@@ -13,6 +13,8 @@ runs = 1000
 [invariant]
 runs = 256
 depth = 128
+# A handler that reverts would hide the property it was meant to check, so any revert fails the run.
+fail_on_revert = true
 
 [profile.ci.fuzz]
 runs = 5000
