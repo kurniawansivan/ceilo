@@ -21,7 +21,8 @@ Solo, about 10 hours per week, $0 budget in stage a. MVP target: 12 weeks.
 |---|---|
 | M0 | Done. |
 | M1 | Done, see the [learn note](learn/M1.md). The scope grew beyond the plan: a state root in block headers, light-client balance proofs and an attack demonstration. The check answers were written by Claude at the user's request. |
-| M2-M7 | Not started. |
+| M2 | Built and tested, see the [learn note](learn/M2.md) and [ADR 0004](adr/0004-minichain-consensus-and-network.md). Proof-of-work, fork choice, a mempool, nodes on a simulated network and a 51% attack demonstration. Done once the check questions are answered. |
+| M3-M7 | Not started. |
 
 ## Definition of done, stage a
 

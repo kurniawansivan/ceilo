@@ -3,8 +3,10 @@ import { describe, test } from "node:test";
 
 import { type Block, createBlock, hashBlockHeader } from "./block.ts";
 import { checkChain, replayChain } from "./chain.ts";
+import { type ConsensusRules, computeExpectedTarget } from "./consensus.ts";
 import type { Hash } from "./hash.ts";
 import { deriveAddress, derivePublicKey } from "./keys.ts";
+import { mineBlock } from "./mining.ts";
 import {
   type ChainState,
   computeStateRoot,
@@ -21,12 +23,25 @@ import {
   flipFirstBit,
   privateKeyWithValue,
   signTransfer,
+  TEST_RULES,
 } from "./testing.ts";
+import { MAXIMUM_TARGET } from "./work.ts";
 
 const GENESIS_TIMESTAMP = 1_000n;
 const BLOCK_INTERVAL_IN_SECONDS = 10n;
 const TRANSACTIONS_PER_BLOCK = 2n;
 const beneficiaryAddress = deriveAddress(derivePublicKey(privateKeyWithValue(3)));
+
+/** Checks a chain under rules where difficulty never changes, as every structural test needs. */
+const checkTestChain = (chain: readonly Block[], expectedGenesisHash: Hash) =>
+  checkChain(chain, expectedGenesisHash, TEST_RULES);
+
+/** Replays a chain under rules where difficulty never changes. */
+const replayTestChain = (
+  chain: readonly Block[],
+  expectedGenesisHash: Hash,
+  genesisState: ChainState,
+) => replayChain(chain, expectedGenesisHash, genesisState, TEST_RULES);
 
 /** Builds a valid chain: a genesis block, then blocks that each carry two transactions. */
 const buildChain = (blockCount: number, genesisTimestamp = GENESIS_TIMESTAMP): Block[] => {
@@ -96,18 +111,18 @@ const rewriteBlockConsistently = (chain: readonly Block[], blockIndex: number): 
 describe("checkChain accepts", () => {
   test("a chain of only the genesis block", () => {
     const chain = buildChain(1);
-    assert.deepEqual(checkChain(chain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(checkTestChain(chain, genesisHashOf(chain)), { valid: true });
   });
 
   test("a chain of several blocks", () => {
     const chain = buildChain(6);
-    assert.deepEqual(checkChain(chain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(checkTestChain(chain, genesisHashOf(chain)), { valid: true });
   });
 });
 
 describe("checkChain rejects", () => {
   test("an empty chain", () => {
-    assert.deepEqual(checkChain([], new Uint8Array(32)), {
+    assert.deepEqual(checkTestChain([], new Uint8Array(32)), {
       valid: false,
       blockIndex: 0,
       reason: "empty-chain",
@@ -116,7 +131,7 @@ describe("checkChain rejects", () => {
 
   test("a chain whose genesis block is not the expected one", () => {
     const chain = buildChain(4);
-    assert.deepEqual(checkChain(chain, flipFirstBit(genesisHashOf(chain))), {
+    assert.deepEqual(checkTestChain(chain, flipFirstBit(genesisHashOf(chain))), {
       valid: false,
       blockIndex: 0,
       reason: "genesis-hash-mismatch",
@@ -125,7 +140,7 @@ describe("checkChain rejects", () => {
 
   test("an entire chain built on a different genesis block", () => {
     const foreignChain = buildChain(4, GENESIS_TIMESTAMP + 1n);
-    assert.deepEqual(checkChain(foreignChain, genesisHashOf(buildChain(1))), {
+    assert.deepEqual(checkTestChain(foreignChain, genesisHashOf(buildChain(1))), {
       valid: false,
       blockIndex: 0,
       reason: "genesis-hash-mismatch",
@@ -140,11 +155,14 @@ describe("checkChain rejects", () => {
       header: { ...genesis.header, beneficiary: new Uint8Array(19) },
     };
 
-    assert.deepEqual(checkChain(replaceBlockAt(chain, 0, malformedGenesis), genesisHashOf(chain)), {
-      valid: false,
-      blockIndex: 0,
-      reason: "malformed-header",
-    });
+    assert.deepEqual(
+      checkTestChain(replaceBlockAt(chain, 0, malformedGenesis), genesisHashOf(chain)),
+      {
+        valid: false,
+        blockIndex: 0,
+        reason: "malformed-header",
+      },
+    );
   });
 
   test("transactions slipped into the genesis block under its unchanged header", () => {
@@ -153,11 +171,14 @@ describe("checkChain rejects", () => {
       ...elementAt(chain, 0),
       transactions: [createSignedTransactionWithNonce(0n)],
     };
-    assert.deepEqual(checkChain(replaceBlockAt(chain, 0, tamperedGenesis), genesisHashOf(chain)), {
-      valid: false,
-      blockIndex: 0,
-      reason: "transactions-root-mismatch",
-    });
+    assert.deepEqual(
+      checkTestChain(replaceBlockAt(chain, 0, tamperedGenesis), genesisHashOf(chain)),
+      {
+        valid: false,
+        blockIndex: 0,
+        reason: "transactions-root-mismatch",
+      },
+    );
   });
 
   test("a transaction altered inside a block, at the block that holds it", () => {
@@ -173,7 +194,7 @@ describe("checkChain rejects", () => {
       ],
     };
 
-    assert.deepEqual(checkChain(replaceBlockAt(chain, 2, alteredBlock), genesisHashOf(chain)), {
+    assert.deepEqual(checkTestChain(replaceBlockAt(chain, 2, alteredBlock), genesisHashOf(chain)), {
       valid: false,
       blockIndex: 2,
       reason: "transactions-root-mismatch",
@@ -184,18 +205,21 @@ describe("checkChain rejects", () => {
     const chain = buildChain(6);
     const rewrittenBlock = rewriteBlockConsistently(chain, 2);
 
-    assert.deepEqual(checkChain(replaceBlockAt(chain, 2, rewrittenBlock), genesisHashOf(chain)), {
-      valid: false,
-      blockIndex: 3,
-      reason: "previous-hash-mismatch",
-    });
+    assert.deepEqual(
+      checkTestChain(replaceBlockAt(chain, 2, rewrittenBlock), genesisHashOf(chain)),
+      {
+        valid: false,
+        blockIndex: 3,
+        reason: "previous-hash-mismatch",
+      },
+    );
   });
 
   test("a missing block in the middle, where the heights jump", () => {
     const chain = buildChain(6);
     const chainWithGap = chain.filter((_block, blockIndex) => blockIndex !== 2);
 
-    assert.deepEqual(checkChain(chainWithGap, genesisHashOf(chain)), {
+    assert.deepEqual(checkTestChain(chainWithGap, genesisHashOf(chain)), {
       valid: false,
       blockIndex: 2,
       reason: "unexpected-height",
@@ -210,7 +234,7 @@ describe("checkChain rejects", () => {
       elementAt(chain, 2),
     );
 
-    assert.deepEqual(checkChain(swappedChain, genesisHashOf(chain)), {
+    assert.deepEqual(checkTestChain(swappedChain, genesisHashOf(chain)), {
       valid: false,
       blockIndex: 2,
       reason: "unexpected-height",
@@ -221,7 +245,7 @@ describe("checkChain rejects", () => {
     const chain = buildChain(4);
     const chainWithRepeat = [...chain, elementAt(chain, 3)];
 
-    assert.deepEqual(checkChain(chainWithRepeat, genesisHashOf(chain)), {
+    assert.deepEqual(checkTestChain(chainWithRepeat, genesisHashOf(chain)), {
       valid: false,
       blockIndex: 4,
       reason: "unexpected-height",
@@ -233,7 +257,7 @@ describe("checkChain rejects", () => {
     const foreignChain = buildChain(6, GENESIS_TIMESTAMP + 1n);
 
     assert.deepEqual(
-      checkChain(replaceBlockAt(chain, 3, elementAt(foreignChain, 3)), genesisHashOf(chain)),
+      checkTestChain(replaceBlockAt(chain, 3, elementAt(foreignChain, 3)), genesisHashOf(chain)),
       {
         valid: false,
         blockIndex: 3,
@@ -250,7 +274,7 @@ describe("checkChain rejects", () => {
       transactions: [],
     });
 
-    assert.deepEqual(checkChain(alteredAtTwoAndFive, genesisHashOf(chain)), {
+    assert.deepEqual(checkTestChain(alteredAtTwoAndFive, genesisHashOf(chain)), {
       valid: false,
       blockIndex: 2,
       reason: "transactions-root-mismatch",
@@ -264,7 +288,7 @@ describe("what hash links alone cannot stop", () => {
     const rewrittenTip = rewriteBlockConsistently(chain, 5);
     const rewrittenChain = replaceBlockAt(chain, 5, rewrittenTip);
 
-    assert.deepEqual(checkChain(rewrittenChain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(checkTestChain(rewrittenChain, genesisHashOf(chain)), { valid: true });
     assert.notDeepEqual(
       hashBlockHeader(rewrittenTip.header),
       hashBlockHeader(elementAt(chain, 5).header),
@@ -275,7 +299,7 @@ describe("what hash links alone cannot stop", () => {
     const chain = buildChain(6);
     const rewrittenChain = relinkFrom(chain, 2, rewriteBlockConsistently(chain, 2));
 
-    assert.deepEqual(checkChain(rewrittenChain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(checkTestChain(rewrittenChain, genesisHashOf(chain)), { valid: true });
     for (let blockIndex = 0; blockIndex < chain.length; blockIndex++) {
       const originalHash = hashBlockHeader(elementAt(chain, blockIndex).header);
       const rewrittenHash = hashBlockHeader(elementAt(rewrittenChain, blockIndex).header);
@@ -321,6 +345,8 @@ const buildRealChain = (
   const genesis = createGenesis({
     chainIdentifier: CHAIN_IDENTIFIER,
     timestamp: GENESIS_TIMESTAMP,
+    target: MAXIMUM_TARGET,
+    blockReward: 10n,
     allocations: [{ address: addressOfAccount(SENDER), balance: ALLOCATED_BALANCE }],
   });
   const chain: Block[] = [genesis.block];
@@ -348,7 +374,7 @@ const buildRealChain = (
 describe("replayChain accepts", () => {
   test("a chain of only the genesis block", () => {
     const { chain, genesisState } = buildRealChain(1);
-    const result = replayChain(chain, genesisHashOf(chain), genesisState);
+    const result = replayTestChain(chain, genesisHashOf(chain), genesisState);
 
     assert.ok(result.valid);
     assert.deepEqual(computeStateRoot(result.state), computeStateRoot(genesisState));
@@ -356,7 +382,7 @@ describe("replayChain accepts", () => {
 
   test("a real chain, ending in exactly the state its last block committed to", () => {
     const { chain, genesisState, finalState } = buildRealChain(6);
-    const result = replayChain(chain, genesisHashOf(chain), genesisState);
+    const result = replayTestChain(chain, genesisHashOf(chain), genesisState);
 
     assert.ok(result.valid);
     assert.deepEqual(computeStateRoot(result.state), computeStateRoot(finalState));
@@ -367,7 +393,7 @@ describe("replayChain accepts", () => {
 describe("replayChain rejects", () => {
   test("a chain with the wrong genesis hash, as checkChain does", () => {
     const { chain, genesisState } = buildRealChain(4);
-    assert.deepEqual(replayChain(chain, flipFirstBit(genesisHashOf(chain)), genesisState), {
+    assert.deepEqual(replayTestChain(chain, flipFirstBit(genesisHashOf(chain)), genesisState), {
       valid: false,
       blockIndex: 0,
       reason: "genesis-hash-mismatch",
@@ -388,7 +414,7 @@ describe("replayChain rejects", () => {
     };
 
     assert.deepEqual(
-      replayChain(replaceBlockAt(chain, 3, alteredBlock), genesisHashOf(chain), genesisState),
+      replayTestChain(replaceBlockAt(chain, 3, alteredBlock), genesisHashOf(chain), genesisState),
       { valid: false, blockIndex: 3, reason: "transactions-root-mismatch" },
     );
   });
@@ -399,7 +425,7 @@ describe("replayChain rejects", () => {
       { address: addressOfAccount(SENDER), balance: ALLOCATED_BALANCE + 1n },
     ]);
 
-    assert.deepEqual(replayChain(chain, genesisHashOf(chain), richerGenesisState), {
+    assert.deepEqual(replayTestChain(chain, genesisHashOf(chain), richerGenesisState), {
       valid: false,
       blockIndex: 0,
       reason: "state-root-mismatch",
@@ -418,8 +444,8 @@ describe("replayChain rejects", () => {
     });
     const forgedChain = relinkFrom(chain, 2, forgedBlock);
 
-    assert.deepEqual(checkChain(forgedChain, genesisHashOf(chain)), { valid: true });
-    assert.deepEqual(replayChain(forgedChain, genesisHashOf(chain), genesisState), {
+    assert.deepEqual(checkTestChain(forgedChain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(replayTestChain(forgedChain, genesisHashOf(chain), genesisState), {
       valid: false,
       blockIndex: 2,
       reason: "state-root-mismatch",
@@ -438,8 +464,8 @@ describe("replayChain rejects", () => {
     });
     const redirectedChain = relinkFrom(chain, 4, redirectedBlock);
 
-    assert.deepEqual(checkChain(redirectedChain, genesisHashOf(chain)), { valid: true });
-    assert.deepEqual(replayChain(redirectedChain, genesisHashOf(chain), genesisState), {
+    assert.deepEqual(checkTestChain(redirectedChain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(replayTestChain(redirectedChain, genesisHashOf(chain), genesisState), {
       valid: false,
       blockIndex: 4,
       reason: "state-root-mismatch",
@@ -459,8 +485,8 @@ describe("replayChain rejects", () => {
     });
     const longerChain = [...chain, overspendingBlock];
 
-    assert.deepEqual(checkChain(longerChain, genesisHashOf(chain)), { valid: true });
-    assert.deepEqual(replayChain(longerChain, genesisHashOf(chain), genesisState), {
+    assert.deepEqual(checkTestChain(longerChain, genesisHashOf(chain)), { valid: true });
+    assert.deepEqual(replayTestChain(longerChain, genesisHashOf(chain), genesisState), {
       valid: false,
       blockIndex: 3,
       reason: "insufficient-balance",
@@ -472,7 +498,7 @@ describe("what replaying cannot stop", () => {
   test("an alternative history that is consistent all the way is just as valid", () => {
     const original = buildRealChain(6);
     const alternative = buildRealChain(6, { blockIndex: 2, amount: TRANSFER_AMOUNT + 1n });
-    const result = replayChain(
+    const result = replayTestChain(
       alternative.chain,
       genesisHashOf(original.chain),
       alternative.genesisState,
@@ -487,5 +513,210 @@ describe("what replaying cannot stop", () => {
       computeStateRoot(alternative.finalState),
       computeStateRoot(original.finalState),
     );
+  });
+});
+
+// A window of 4 blocks with 10-second intervals expects 3 intervals, so 30 seconds.
+const RETARGET_RULES: ConsensusRules = {
+  targetBlockIntervalInSeconds: 10n,
+  retargetWindowInBlocks: 4n,
+  maximumTarget: MAXIMUM_TARGET,
+  maximumAdjustmentFactor: 4n,
+  futureTimeLimitInSeconds: 30n,
+};
+const INITIAL_TARGET = 2n ** 252n - 1n;
+
+/** Mines the next block on a chain, with the target the rules call for unless one is forced. */
+const mineNextBlock = (
+  chain: readonly Block[],
+  secondsBetweenBlocks: bigint,
+  forcedTarget?: bigint,
+): Block => {
+  const parent = elementAt(chain, chain.length - 1);
+  const target =
+    forcedTarget ??
+    computeExpectedTarget(RETARGET_RULES, parent.header, (height) => chain[Number(height)]?.header);
+  const unmined = createBlock({
+    parentHeader: parent.header,
+    transactions: [],
+    timestamp: parent.header.timestamp + secondsBetweenBlocks,
+    beneficiary: beneficiaryAddress,
+    stateRoot: createPlaceholderStateRoot(),
+    target,
+  });
+  const mined = mineBlock(unmined, 100_000);
+  assert.ok(mined, "no nonce was found within the budget");
+  return mined;
+};
+
+/** Builds a chain of really mined blocks that arrive a fixed number of seconds apart. */
+const buildMinedChain = (
+  blockCount: number,
+  secondsBetweenBlocks: bigint,
+  genesisTarget = INITIAL_TARGET,
+): Block[] => {
+  const chain: Block[] = [createStructuralGenesisBlock(GENESIS_TIMESTAMP, genesisTarget)];
+  while (chain.length < blockCount) {
+    chain.push(mineNextBlock(chain, secondsBetweenBlocks));
+  }
+  return chain;
+};
+
+/** Returns the target of the block at a height. */
+const targetAt = (chain: readonly Block[], height: number): bigint =>
+  elementAt(chain, height).header.target;
+
+describe("difficulty adjustment in a chain", () => {
+  test("keeps the target inside a window and retargets on its boundary, harder when blocks are fast", () => {
+    const chain = buildMinedChain(5, 2n);
+
+    for (const height of [1, 2, 3]) {
+      assert.equal(targetAt(chain, height), INITIAL_TARGET, `height ${height}`);
+    }
+    // The window took 6 seconds, below the minimum of 30 / 4 = 7, so 7 is used.
+    assert.equal(targetAt(chain, 4), (INITIAL_TARGET * 7n) / 30n);
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), RETARGET_RULES), { valid: true });
+  });
+
+  test("makes the target easier by at most four times when blocks are slow", () => {
+    const chain = buildMinedChain(5, 100n);
+
+    // The window took 300 seconds, above the maximum of 30 * 4 = 120, so 120 is used.
+    assert.equal(targetAt(chain, 4), INITIAL_TARGET * 4n);
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), RETARGET_RULES), { valid: true });
+  });
+
+  test("leaves the target alone when blocks arrive exactly on schedule", () => {
+    const chain = buildMinedChain(9, 10n);
+    for (let height = 1; height <= 8; height++) {
+      assert.equal(targetAt(chain, height), INITIAL_TARGET, `height ${height}`);
+    }
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), RETARGET_RULES), { valid: true });
+  });
+
+  test("retargets each window from its own blocks, so a second adjustment builds on the first", () => {
+    const chain = buildMinedChain(9, 5n);
+    // Each window took 15 seconds against 30 expected, so the target halves each time.
+    const afterFirstWindow = (INITIAL_TARGET * 15n) / 30n;
+    const afterSecondWindow = (afterFirstWindow * 15n) / 30n;
+
+    assert.equal(targetAt(chain, 4), afterFirstWindow);
+    assert.equal(targetAt(chain, 7), afterFirstWindow);
+    assert.equal(targetAt(chain, 8), afterSecondWindow);
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), RETARGET_RULES), { valid: true });
+  });
+
+  test("never lets the target pass the maximum the rules allow", () => {
+    const chain = buildMinedChain(5, 100n, MAXIMUM_TARGET);
+    assert.equal(targetAt(chain, 4), MAXIMUM_TARGET);
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), RETARGET_RULES), { valid: true });
+  });
+
+  test("rejects a retarget block that keeps the old target", () => {
+    const honest = buildMinedChain(4, 2n);
+    const chain = [...honest, mineNextBlock(honest, 2n, INITIAL_TARGET)];
+
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), RETARGET_RULES), {
+      valid: false,
+      blockIndex: 4,
+      reason: "target-mismatch",
+    });
+  });
+
+  test("rejects a retarget block that claims an easier target than the rules allow", () => {
+    const honest = buildMinedChain(4, 2n);
+    const chain = [...honest, mineNextBlock(honest, 2n, MAXIMUM_TARGET)];
+
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), RETARGET_RULES), {
+      valid: false,
+      blockIndex: 4,
+      reason: "target-mismatch",
+    });
+  });
+
+  test("rejects a block in the middle of a window that changes the target", () => {
+    const honest = buildMinedChain(2, 2n);
+    const chain = [...honest, mineNextBlock(honest, 2n, INITIAL_TARGET / 2n)];
+
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), RETARGET_RULES), {
+      valid: false,
+      blockIndex: 2,
+      reason: "target-mismatch",
+    });
+  });
+
+  test("rejects a chain whose genesis target is easier than the rules allow", () => {
+    const chain = buildMinedChain(2, 2n);
+    const strictRules = { ...RETARGET_RULES, maximumTarget: 2n ** 200n };
+
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), strictRules), {
+      valid: false,
+      blockIndex: 0,
+      reason: "genesis-target-too-easy",
+    });
+  });
+
+  test("accepts a genesis target exactly equal to the maximum the rules allow", () => {
+    const chain = buildMinedChain(2, 2n);
+    const exactRules = { ...RETARGET_RULES, maximumTarget: INITIAL_TARGET };
+    assert.deepEqual(checkChain(chain, genesisHashOf(chain), exactRules), { valid: true });
+  });
+
+  test("checks the rules even for a chain of only the genesis block", () => {
+    const chain = buildMinedChain(1, 2n);
+    const brokenRules = { ...RETARGET_RULES, retargetWindowInBlocks: 1n };
+    assert.throws(() => checkChain(chain, genesisHashOf(chain), brokenRules), RangeError);
+  });
+
+  test("throws when the rules themselves are invalid, which is a mistake and not a bad chain", () => {
+    const chain = buildMinedChain(2, 2n);
+    const brokenRules = { ...RETARGET_RULES, retargetWindowInBlocks: 1n };
+    assert.throws(() => checkChain(chain, genesisHashOf(chain), brokenRules), RangeError);
+  });
+
+  test("replays a real chain across a retarget, with state, mining and difficulty all agreeing", () => {
+    const genesis = createGenesis({
+      chainIdentifier: CHAIN_IDENTIFIER,
+      timestamp: GENESIS_TIMESTAMP,
+      target: INITIAL_TARGET,
+      blockReward: 10n,
+      allocations: [{ address: addressOfAccount(SENDER), balance: ALLOCATED_BALANCE }],
+    });
+    const chain: Block[] = [genesis.block];
+    let state = genesis.state;
+
+    while (chain.length < 6) {
+      const parent = elementAt(chain, chain.length - 1);
+      const production = produceBlock({
+        parentState: state,
+        parentHeader: parent.header,
+        transactions: [
+          signTransfer({
+            from: SENDER,
+            to: RECEIVER,
+            amount: 10n,
+            fee: 1n,
+            nonce: BigInt(chain.length - 1),
+          }),
+        ],
+        timestamp: parent.header.timestamp + 2n,
+        beneficiary: addressOfAccount(FEE_COLLECTOR),
+        target: computeExpectedTarget(
+          RETARGET_RULES,
+          parent.header,
+          (height) => chain[Number(height)]?.header,
+        ),
+      });
+      assert.ok(production.valid);
+      const mined = mineBlock(production.block, 100_000);
+      assert.ok(mined);
+      chain.push(mined);
+      state = production.state;
+    }
+
+    const result = replayChain(chain, genesisHashOf(chain), genesis.state, RETARGET_RULES);
+    assert.ok(result.valid);
+    assert.deepEqual(computeStateRoot(result.state), computeStateRoot(state));
+    assert.equal(targetAt(chain, 4), (INITIAL_TARGET * 7n) / 30n);
   });
 });

@@ -13,7 +13,7 @@ import {
 } from "./merkle.ts";
 import { recoverSender, type SignedTransaction } from "./transaction.ts";
 
-const CHAIN_LEAF_DOMAIN = "ceilo/chain-identifier";
+const CHAIN_LEAF_DOMAIN = "ceilo/chain-parameters";
 const ACCOUNT_LEAF_DOMAIN = "ceilo/account";
 
 /** The largest value a balance, amount, fee, nonce or chain identifier may hold: 2^256 - 1. */
@@ -28,9 +28,11 @@ export type Account = {
   readonly nonce: bigint;
 };
 
-/** Every non-empty account, by lowercase hexadecimal address, on one chain. */
+/** Every non-empty account, by lowercase hexadecimal address, on one chain, and what a block pays. */
 export type ChainState = {
   readonly chainIdentifier: bigint;
+  /** The new coins every block pays its beneficiary, on top of the fees. */
+  readonly blockReward: bigint;
   readonly accounts: ReadonlyMap<string, Account>;
 };
 
@@ -55,6 +57,11 @@ export type TransactionRejection =
   | "invalid-signature"
   | "nonce-mismatch"
   | "insufficient-balance";
+
+/** The outcome of checking a transaction that is not applied: who sent it, or the reason it was rejected. */
+export type TransactionPoolCheck =
+  | { readonly valid: true; readonly sender: Address }
+  | { readonly valid: false; readonly reason: TransactionRejection };
 
 /** The outcome of applying a transaction: the new state, or the reason it was rejected. */
 export type TransactionApplication =
@@ -82,6 +89,8 @@ export type BlockProductionRequest = {
   readonly transactions: readonly SignedTransaction[];
   readonly timestamp: bigint;
   readonly beneficiary: Address;
+  /** The target the block must meet; the parent's target if left out. */
+  readonly target?: bigint;
 };
 
 /** The outcome of producing a block: the block with the state it leaves, or the first bad transaction. */
@@ -97,6 +106,10 @@ export type BlockProduction =
 export type GenesisParameters = {
   readonly chainIdentifier: bigint;
   readonly timestamp: bigint;
+  /** The first target: how hard the first mined block is to find. */
+  readonly target: bigint;
+  /** The new coins each block pays its beneficiary; zero means no new coins are ever issued. */
+  readonly blockReward: bigint;
   readonly allocations: readonly GenesisAllocation[];
 };
 
@@ -158,15 +171,18 @@ function isWellFormed(transaction: SignedTransaction): boolean {
   );
 }
 
-/** Checks a transaction against the accounts and applies it if it passes, else returns why not. */
-function applyToAccounts(
-  accounts: Map<string, Account>,
+/** Adds what a transaction moves out of its sender: the amount and the fee. */
+function computeTotalCost(transaction: SignedTransaction): bigint {
+  return transaction.amount + transaction.fee;
+}
+
+/** Checks the rules that need no account, in order, and names the sender when the signature holds. */
+function checkStandaloneRules(
   chainIdentifier: bigint,
   transaction: SignedTransaction,
-  beneficiary: Address,
-): TransactionRejection | undefined {
+): TransactionPoolCheck {
   if (!isWellFormed(transaction)) {
-    return "malformed-transaction";
+    return { valid: false, reason: "malformed-transaction" };
   }
   const values = [
     transaction.chainIdentifier,
@@ -175,23 +191,38 @@ function applyToAccounts(
     transaction.fee,
   ];
   if (!values.every((value) => isInRange(value))) {
-    return "value-out-of-range";
+    return { valid: false, reason: "value-out-of-range" };
   }
   if (transaction.chainIdentifier !== chainIdentifier) {
-    return "wrong-chain";
+    return { valid: false, reason: "wrong-chain" };
   }
   if (transaction.fee < MINIMUM_FEE) {
-    return "fee-too-low";
+    return { valid: false, reason: "fee-too-low" };
   }
   const sender = tryCompute(() => recoverSender(transaction));
   if (sender === undefined) {
-    return "invalid-signature";
+    return { valid: false, reason: "invalid-signature" };
   }
+  return { valid: true, sender };
+}
+
+/** Checks a transaction against the accounts and applies it if it passes, else returns why not. */
+function applyToAccounts(
+  accounts: Map<string, Account>,
+  chainIdentifier: bigint,
+  transaction: SignedTransaction,
+  beneficiary: Address,
+): TransactionRejection | undefined {
+  const standalone = checkStandaloneRules(chainIdentifier, transaction);
+  if (!standalone.valid) {
+    return standalone.reason;
+  }
+  const { sender } = standalone;
   const senderAccount = readAccount(accounts, sender);
   if (transaction.nonce !== senderAccount.nonce) {
     return "nonce-mismatch";
   }
-  const totalCost = transaction.amount + transaction.fee;
+  const totalCost = computeTotalCost(transaction);
   if (senderAccount.balance < totalCost) {
     return "insufficient-balance";
   }
@@ -209,9 +240,13 @@ function applyToAccounts(
 export function createGenesisState(
   chainIdentifier: bigint,
   allocations: readonly GenesisAllocation[],
+  blockReward: bigint = 0n,
 ): ChainState {
   if (!isInRange(chainIdentifier)) {
     throw new RangeError("chain identifier is out of range");
+  }
+  if (!isInRange(blockReward)) {
+    throw new RangeError("block reward is out of range");
   }
   const accounts = new Map<string, Account>();
   const allocatedKeys = new Set<string>();
@@ -226,7 +261,7 @@ export function createGenesisState(
     allocatedKeys.add(accountKey(allocation.address));
     writeAccount(accounts, allocation.address, { balance: allocation.balance, nonce: 0n });
   }
-  return { chainIdentifier, accounts };
+  return { chainIdentifier, blockReward, accounts };
 }
 
 /** Reads an account from the state, treating an unknown address as empty. */
@@ -255,10 +290,29 @@ export function applyTransaction(
   if (reason !== undefined) {
     return { valid: false, reason };
   }
-  return { valid: true, state: { chainIdentifier: state.chainIdentifier, accounts } };
+  return { valid: true, state: { ...state, accounts } };
 }
 
-/** Applies transactions in order to a copy of the state, all or none, paying fees to the beneficiary. */
+/** Checks a transaction a pool may hold: valid now, or waiting for earlier nonces, without applying it. */
+export function checkTransactionForPool(
+  state: ChainState,
+  transaction: SignedTransaction,
+): TransactionPoolCheck {
+  const standalone = checkStandaloneRules(state.chainIdentifier, transaction);
+  if (!standalone.valid) {
+    return standalone;
+  }
+  const senderAccount = readAccount(state.accounts, standalone.sender);
+  if (transaction.nonce < senderAccount.nonce) {
+    return { valid: false, reason: "nonce-mismatch" };
+  }
+  if (senderAccount.balance < computeTotalCost(transaction)) {
+    return { valid: false, reason: "insufficient-balance" };
+  }
+  return standalone;
+}
+
+/** Applies a block's transactions to a copy of the state, all or none, then pays the beneficiary the reward. */
 function applyTransactions(
   state: ChainState,
   transactions: readonly SignedTransaction[],
@@ -272,7 +326,9 @@ function applyTransactions(
       return { valid: false, transactionIndex, reason };
     }
   }
-  return { valid: true, state: { chainIdentifier: state.chainIdentifier, accounts } };
+  // Paid last, so a beneficiary cannot spend the reward inside the block that created it.
+  creditAccount(accounts, beneficiary, state.blockReward);
+  return { valid: true, state: { ...state, accounts } };
 }
 
 /** Encodes an account and its address as the bytes of one leaf of the state tree. */
@@ -292,7 +348,7 @@ function listStateLeaves(state: ChainState): Uint8Array[] {
   const accountLeaves = sortedAccountEntries(state).map(([key, account]) =>
     encodeAccountLeaf(fromHexadecimal(key), account),
   );
-  return [encode([CHAIN_LEAF_DOMAIN, state.chainIdentifier]), ...accountLeaves];
+  return [encode([CHAIN_LEAF_DOMAIN, state.chainIdentifier, state.blockReward]), ...accountLeaves];
 }
 
 /** Computes the Merkle root over the chain identifier and every account, sorted by address. */
@@ -325,10 +381,15 @@ export function verifyAccountProof(
 
 /** Creates the genesis state and a genesis block whose header commits to it, allocations included. */
 export function createGenesis(parameters: GenesisParameters): Genesis {
-  const state = createGenesisState(parameters.chainIdentifier, parameters.allocations);
+  const state = createGenesisState(
+    parameters.chainIdentifier,
+    parameters.allocations,
+    parameters.blockReward,
+  );
   const block = createGenesisBlock({
     timestamp: parameters.timestamp,
     stateRoot: computeStateRoot(state),
+    target: parameters.target,
   });
   return { block, state };
 }
@@ -360,6 +421,7 @@ export function produceBlock(request: BlockProductionRequest): BlockProduction {
     timestamp: request.timestamp,
     beneficiary: request.beneficiary,
     stateRoot: computeStateRoot(applied.state),
+    ...(request.target === undefined ? {} : { target: request.target }),
   });
   return { valid: true, block, state: applied.state };
 }

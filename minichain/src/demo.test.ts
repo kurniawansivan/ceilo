@@ -89,16 +89,22 @@ describe("runDemonstration", () => {
     assert.equal(balanceProof.inflatedClaimAccepted, false);
   });
 
+  test("carries the network demonstration: a split that heals and a 51% attack", () => {
+    assert.equal(demonstration.network.partition.agreedAfterJoining, true);
+    assert.equal(demonstration.network.doubleSpends.length, 5);
+  });
+
   test("is deterministic: two runs give the same text", () => {
     assert.equal(formatDemonstration(runDemonstration()), formatDemonstration(runDemonstration()));
   });
 });
 
 describe("formatDemonstration", () => {
-  const text = formatDemonstration(runDemonstration());
+  const demonstration = runDemonstration();
+  const text = formatDemonstration(demonstration);
 
   test("mentions every scenario by title", () => {
-    for (const scenario of runDemonstration().scenarios) {
+    for (const scenario of demonstration.scenarios) {
       assert.ok(text.includes(scenario.title), `missing: ${scenario.title}`);
     }
   });
@@ -107,6 +113,19 @@ describe("formatDemonstration", () => {
     for (const layer of ["chain structure", "transaction rules", "state replay", "not detected"]) {
       assert.ok(text.includes(layer), `missing layer: ${layer}`);
     }
+  });
+
+  test("numbers its sections one to six, in order", () => {
+    const headings = text.split("\n").filter((line) => /^[0-9]\. /.test(line));
+    assert.deepEqual(
+      headings.map((heading) => heading.slice(0, 2)),
+      ["1.", "2.", "3.", "4.", "5.", "6."],
+    );
+  });
+
+  test("includes the network sections before the summary", () => {
+    assert.ok(text.indexOf("4. Consensus") < text.indexOf("5. A majority"));
+    assert.ok(text.indexOf("5. A majority") < text.indexOf("6. Summary"));
   });
 
   test("states the lesson: tamper-evident, not tamper-proof", () => {

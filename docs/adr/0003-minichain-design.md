@@ -1,6 +1,6 @@
 # 0003. Minichain design
 
-Status: accepted, 2026-10-26.
+Status: accepted, 2026-10-26. Consensus, the block reward, the block size limit and the mempool are decided in [0004](0004-minichain-consensus-and-network.md).
 
 ## Decision
 

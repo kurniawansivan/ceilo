@@ -1,7 +1,13 @@
 import { type Block, createBlock, hashBlockHeader } from "./block.ts";
 import { checkChain, replayChain } from "./chain.ts";
+import type { ConsensusRules } from "./consensus.ts";
 import { type Hash, toHexadecimal } from "./hash.ts";
 import { type Address, deriveAddress, derivePublicKey, type PrivateKey } from "./keys.ts";
+import {
+  formatNetworkDemonstration,
+  type NetworkDemonstration,
+  runNetworkDemonstration,
+} from "./networkdemo.ts";
 import {
   applyTransaction,
   type ChainState,
@@ -15,6 +21,7 @@ import {
 } from "./state.ts";
 import { elementAt, flipFirstBit, privateKeyWithValue } from "./testing.ts";
 import { type SignedTransaction, signTransaction } from "./transaction.ts";
+import { MAXIMUM_TARGET } from "./work.ts";
 
 const CHAIN_IDENTIFIER = 1337n;
 const GENESIS_TIMESTAMP = 1_700_000_000n;
@@ -24,6 +31,15 @@ const ATTACKED_BLOCK_INDEX = 2;
 const ALICE_ALLOCATION = 1_000n;
 const BOB_ALLOCATION = 500n;
 const INFLATION_CLAIMED_BY_LIAR = 1_000n;
+
+/** Rules for the demonstration chain: no work is required and difficulty never changes. */
+const DEMO_RULES: ConsensusRules = {
+  targetBlockIntervalInSeconds: BLOCK_INTERVAL_IN_SECONDS,
+  retargetWindowInBlocks: 1_000_000n,
+  maximumTarget: MAXIMUM_TARGET,
+  maximumAdjustmentFactor: 4n,
+  futureTimeLimitInSeconds: 30n,
+};
 
 /** Where a bad chain or transaction was stopped, from the earliest layer to "never". */
 export type DetectionLayer =
@@ -83,6 +99,7 @@ export type Demonstration = {
   readonly overview: ChainOverview;
   readonly balanceProof: BalanceProofResult;
   readonly scenarios: readonly ScenarioResult[];
+  readonly network: NetworkDemonstration;
 };
 
 /** A name for the output, a key to sign with, and the address that holds the coins. */
@@ -166,6 +183,8 @@ function createDemonstrationGenesis() {
   return createGenesis({
     chainIdentifier: CHAIN_IDENTIFIER,
     timestamp: GENESIS_TIMESTAMP,
+    target: MAXIMUM_TARGET,
+    blockReward: 0n,
     allocations: [
       { address: ALICE.address, balance: ALICE_ALLOCATION },
       { address: BOB.address, balance: BOB_ALLOCATION },
@@ -228,14 +247,14 @@ function inflateFirstTransaction(block: Block): SignedTransaction[] {
 
 /** Runs the structural check, then the replay, and reports the first layer that stops the chain. */
 function detectChainFault(chain: readonly Block[], honest: HonestChain): Outcome {
-  const structure = checkChain(chain, honest.genesisHash);
+  const structure = checkChain(chain, honest.genesisHash, DEMO_RULES);
   if (!structure.valid) {
     return {
       detectedBy: "chain structure",
       reason: `${structure.reason} at block ${structure.blockIndex}`,
     };
   }
-  const replay = replayChain(chain, honest.genesisHash, elementAt(honest.states, 0));
+  const replay = replayChain(chain, honest.genesisHash, elementAt(honest.states, 0), DEMO_RULES);
   if (!replay.valid) {
     return { detectedBy: "state replay", reason: `${replay.reason} at block ${replay.blockIndex}` };
   }
@@ -399,7 +418,12 @@ function runTransactionScenarios(honest: HonestChain): ScenarioResult[] {
 /** Summarises the honest chain: its blocks, who holds what, and whether the supply stayed fixed. */
 function summariseChain(honest: HonestChain): ChainOverview {
   const finalState = elementAt(honest.states, honest.states.length - 1);
-  const replay = replayChain(honest.chain, honest.genesisHash, elementAt(honest.states, 0));
+  const replay = replayChain(
+    honest.chain,
+    honest.genesisHash,
+    elementAt(honest.states, 0),
+    DEMO_RULES,
+  );
   return {
     genesisHash: honest.genesisHash,
     blocks: honest.chain.map((block) => ({
@@ -454,6 +478,7 @@ export function runDemonstration(): Demonstration {
       ...runTransactionScenarios(honest),
       runRewriteScenario(honest),
     ],
+    network: runNetworkDemonstration(),
   };
 }
 
@@ -527,15 +552,16 @@ function formatSummary(scenarios: readonly ScenarioResult[]): string[] {
     "not detected",
   ];
   return [
-    "4. Summary",
+    "6. Summary",
     ...layers.map(
       (layer) =>
         `   ${layer.padEnd(18)} ${scenarios.filter((scenario) => scenario.detectedBy === layer).length}`,
     ),
     "",
     "   A hash-linked chain is tamper-evident, not tamper-proof: a history rewritten",
-    "   consistently from some block on passes every check. Choosing between valid",
-    "   histories needs consensus, which is the next module.",
+    "   consistently from some block on passes every check. Consensus chooses between",
+    "   valid histories by the work behind them, so a rewrite costs as much work as the",
+    "   honest chain holds, until someone commands a majority of the hashing.",
   ];
 }
 
@@ -550,6 +576,8 @@ export function formatDemonstration(demonstration: Demonstration): string {
     ...formatBalanceProof(demonstration.balanceProof),
     "",
     ...formatScenarios(demonstration.scenarios),
+    "",
+    ...formatNetworkDemonstration(demonstration.network),
     "",
     ...formatSummary(demonstration.scenarios),
   ].join("\n");
