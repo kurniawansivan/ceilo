@@ -9,7 +9,12 @@ import {
 } from "./block.ts";
 import { type ConsensusRules, computeExpectedTarget, validateConsensusRules } from "./consensus.ts";
 import type { Hash } from "./hash.ts";
-import { applyBlock, type ChainState, type TransactionRejection } from "./state.ts";
+import {
+  applyBlock,
+  type ChainState,
+  computeStateRoot,
+  type TransactionRejection,
+} from "./state.ts";
 
 /** Why a chain was rejected: any block rule, or one of the two rules about the chain as a whole. */
 export type ChainInvalidReason =
@@ -87,7 +92,7 @@ export function checkChain(
   return { valid: true };
 }
 
-/** Checks a chain's structure, then replays every block, genesis included, checking each state root. */
+/** Checks a chain's structure, then replays every block after genesis, checking each state root. */
 export function replayChain(
   chain: readonly Block[],
   expectedGenesisHash: Hash,
@@ -101,6 +106,13 @@ export function replayChain(
 
   let state = genesisState;
   for (const [blockIndex, block] of chain.entries()) {
+    if (blockIndex === 0) {
+      // Genesis is defined, not applied: it pays no reward, and must commit to the state it starts from.
+      if (!equalBytes(computeStateRoot(genesisState), block.header.stateRoot)) {
+        return { valid: false, blockIndex, reason: "state-root-mismatch" };
+      }
+      continue;
+    }
     const applied = applyBlock(state, block);
     if (!applied.valid) {
       return { valid: false, blockIndex, reason: applied.reason };

@@ -346,6 +346,7 @@ const buildRealChain = (
     chainIdentifier: CHAIN_IDENTIFIER,
     timestamp: GENESIS_TIMESTAMP,
     target: MAXIMUM_TARGET,
+    blockReward: 10n,
     allocations: [{ address: addressOfAccount(SENDER), balance: ALLOCATED_BALANCE }],
   });
   const chain: Block[] = [genesis.block];
@@ -678,6 +679,7 @@ describe("difficulty adjustment in a chain", () => {
       chainIdentifier: CHAIN_IDENTIFIER,
       timestamp: GENESIS_TIMESTAMP,
       target: INITIAL_TARGET,
+      blockReward: 10n,
       allocations: [{ address: addressOfAccount(SENDER), balance: ALLOCATED_BALANCE }],
     });
     const chain: Block[] = [genesis.block];

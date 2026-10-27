@@ -9,6 +9,7 @@ import type { Hash } from "./hash.ts";
 import { mineBlock } from "./mining.ts";
 import {
   computeStateRoot,
+  computeTotalSupply,
   createGenesis,
   type Genesis,
   getAccount,
@@ -59,6 +60,7 @@ const createTestGenesis = (): Genesis =>
     chainIdentifier: CHAIN_IDENTIFIER,
     timestamp: GENESIS_TIMESTAMP,
     target: INITIAL_TARGET,
+    blockReward: 50n,
     allocations: [{ address: addressOfAccount(ALICE), balance: 1_000n }],
   });
 
@@ -168,6 +170,7 @@ describe("a new tree", () => {
       chainIdentifier: CHAIN_IDENTIFIER,
       timestamp: GENESIS_TIMESTAMP,
       target: INITIAL_TARGET,
+      blockReward: 50n,
       allocations: [{ address: addressOfAccount(ALICE), balance: 2_000n }],
     }).state;
 
@@ -640,6 +643,30 @@ describe("state across a reorganization", () => {
     }
     assert.equal(balanceAtTip(tree, BOB), 100n);
     assert.equal(balanceAtTip(tree, DAVE), 0n);
+  });
+
+  test("moves block rewards with the winning branch, and the supply with it", () => {
+    const tree = createTree();
+    const [firstA, secondA, thirdA] = mineBranch(3, { miner: MINER_ONE });
+    const [firstB, secondB] = mineBranch(2, { miner: MINER_TWO });
+    assert.ok(firstA && secondA && thirdA && firstB && secondB);
+
+    addAccepted(tree, firstA);
+    assert.equal(balanceAtTip(tree, MINER_ONE), 50n);
+    assert.equal(computeTotalSupply(tree.tip.state), 1_000n + 50n);
+
+    addAccepted(tree, firstB);
+    addAccepted(tree, secondB);
+    // Branch B now leads, so branch A's reward is gone from the tip and B's two rewards are in.
+    assert.equal(balanceAtTip(tree, MINER_ONE), 0n);
+    assert.equal(balanceAtTip(tree, MINER_TWO), 100n);
+    assert.equal(computeTotalSupply(tree.tip.state), 1_000n + 100n);
+
+    addAccepted(tree, secondA);
+    addAccepted(tree, thirdA);
+    assert.equal(balanceAtTip(tree, MINER_ONE), 150n);
+    assert.equal(balanceAtTip(tree, MINER_TWO), 0n);
+    assert.equal(computeTotalSupply(tree.tip.state), 1_000n + 150n);
   });
 
   test("keeps sibling states independent of each other", () => {

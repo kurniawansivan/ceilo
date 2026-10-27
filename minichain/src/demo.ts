@@ -178,6 +178,7 @@ function createDemonstrationGenesis() {
     chainIdentifier: CHAIN_IDENTIFIER,
     timestamp: GENESIS_TIMESTAMP,
     target: MAXIMUM_TARGET,
+    blockReward: 0n,
     allocations: [
       { address: ALICE.address, balance: ALICE_ALLOCATION },
       { address: BOB.address, balance: BOB_ALLOCATION },

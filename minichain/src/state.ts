@@ -13,7 +13,7 @@ import {
 } from "./merkle.ts";
 import { recoverSender, type SignedTransaction } from "./transaction.ts";
 
-const CHAIN_LEAF_DOMAIN = "ceilo/chain-identifier";
+const CHAIN_LEAF_DOMAIN = "ceilo/chain-parameters";
 const ACCOUNT_LEAF_DOMAIN = "ceilo/account";
 
 /** The largest value a balance, amount, fee, nonce or chain identifier may hold: 2^256 - 1. */
@@ -28,9 +28,11 @@ export type Account = {
   readonly nonce: bigint;
 };
 
-/** Every non-empty account, by lowercase hexadecimal address, on one chain. */
+/** Every non-empty account, by lowercase hexadecimal address, on one chain, and what a block pays. */
 export type ChainState = {
   readonly chainIdentifier: bigint;
+  /** The new coins every block pays its beneficiary, on top of the fees. */
+  readonly blockReward: bigint;
   readonly accounts: ReadonlyMap<string, Account>;
 };
 
@@ -101,6 +103,8 @@ export type GenesisParameters = {
   readonly timestamp: bigint;
   /** The first target: how hard the first mined block is to find. */
   readonly target: bigint;
+  /** The new coins each block pays its beneficiary; zero means no new coins are ever issued. */
+  readonly blockReward: bigint;
   readonly allocations: readonly GenesisAllocation[];
 };
 
@@ -213,9 +217,13 @@ function applyToAccounts(
 export function createGenesisState(
   chainIdentifier: bigint,
   allocations: readonly GenesisAllocation[],
+  blockReward: bigint = 0n,
 ): ChainState {
   if (!isInRange(chainIdentifier)) {
     throw new RangeError("chain identifier is out of range");
+  }
+  if (!isInRange(blockReward)) {
+    throw new RangeError("block reward is out of range");
   }
   const accounts = new Map<string, Account>();
   const allocatedKeys = new Set<string>();
@@ -230,7 +238,7 @@ export function createGenesisState(
     allocatedKeys.add(accountKey(allocation.address));
     writeAccount(accounts, allocation.address, { balance: allocation.balance, nonce: 0n });
   }
-  return { chainIdentifier, accounts };
+  return { chainIdentifier, blockReward, accounts };
 }
 
 /** Reads an account from the state, treating an unknown address as empty. */
@@ -259,10 +267,10 @@ export function applyTransaction(
   if (reason !== undefined) {
     return { valid: false, reason };
   }
-  return { valid: true, state: { chainIdentifier: state.chainIdentifier, accounts } };
+  return { valid: true, state: { ...state, accounts } };
 }
 
-/** Applies transactions in order to a copy of the state, all or none, paying fees to the beneficiary. */
+/** Applies a block's transactions to a copy of the state, all or none, then pays the beneficiary the reward. */
 function applyTransactions(
   state: ChainState,
   transactions: readonly SignedTransaction[],
@@ -276,7 +284,9 @@ function applyTransactions(
       return { valid: false, transactionIndex, reason };
     }
   }
-  return { valid: true, state: { chainIdentifier: state.chainIdentifier, accounts } };
+  // Paid last, so a beneficiary cannot spend the reward inside the block that created it.
+  creditAccount(accounts, beneficiary, state.blockReward);
+  return { valid: true, state: { ...state, accounts } };
 }
 
 /** Encodes an account and its address as the bytes of one leaf of the state tree. */
@@ -296,7 +306,7 @@ function listStateLeaves(state: ChainState): Uint8Array[] {
   const accountLeaves = sortedAccountEntries(state).map(([key, account]) =>
     encodeAccountLeaf(fromHexadecimal(key), account),
   );
-  return [encode([CHAIN_LEAF_DOMAIN, state.chainIdentifier]), ...accountLeaves];
+  return [encode([CHAIN_LEAF_DOMAIN, state.chainIdentifier, state.blockReward]), ...accountLeaves];
 }
 
 /** Computes the Merkle root over the chain identifier and every account, sorted by address. */
@@ -329,7 +339,11 @@ export function verifyAccountProof(
 
 /** Creates the genesis state and a genesis block whose header commits to it, allocations included. */
 export function createGenesis(parameters: GenesisParameters): Genesis {
-  const state = createGenesisState(parameters.chainIdentifier, parameters.allocations);
+  const state = createGenesisState(
+    parameters.chainIdentifier,
+    parameters.allocations,
+    parameters.blockReward,
+  );
   const block = createGenesisBlock({
     timestamp: parameters.timestamp,
     stateRoot: computeStateRoot(state),
