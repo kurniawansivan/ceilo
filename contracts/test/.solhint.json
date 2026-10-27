@@ -40,6 +40,7 @@
     "no-empty-blocks": "off",
     "gas-small-strings": "off",
     "gas-increment-by-one": "off",
-    "gas-indexed-events": "off"
+    "gas-indexed-events": "off",
+    "gas-strict-inequalities": "off"
   }
 }
