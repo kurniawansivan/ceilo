@@ -4,6 +4,11 @@ import type { ConsensusRules } from "./consensus.ts";
 import { type Hash, toHexadecimal } from "./hash.ts";
 import { type Address, deriveAddress, derivePublicKey, type PrivateKey } from "./keys.ts";
 import {
+  formatNetworkDemonstration,
+  type NetworkDemonstration,
+  runNetworkDemonstration,
+} from "./networkdemo.ts";
+import {
   applyTransaction,
   type ChainState,
   computeTotalSupply,
@@ -94,6 +99,7 @@ export type Demonstration = {
   readonly overview: ChainOverview;
   readonly balanceProof: BalanceProofResult;
   readonly scenarios: readonly ScenarioResult[];
+  readonly network: NetworkDemonstration;
 };
 
 /** A name for the output, a key to sign with, and the address that holds the coins. */
@@ -472,6 +478,7 @@ export function runDemonstration(): Demonstration {
       ...runTransactionScenarios(honest),
       runRewriteScenario(honest),
     ],
+    network: runNetworkDemonstration(),
   };
 }
 
@@ -545,15 +552,16 @@ function formatSummary(scenarios: readonly ScenarioResult[]): string[] {
     "not detected",
   ];
   return [
-    "4. Summary",
+    "6. Summary",
     ...layers.map(
       (layer) =>
         `   ${layer.padEnd(18)} ${scenarios.filter((scenario) => scenario.detectedBy === layer).length}`,
     ),
     "",
     "   A hash-linked chain is tamper-evident, not tamper-proof: a history rewritten",
-    "   consistently from some block on passes every check. Choosing between valid",
-    "   histories needs consensus, which is the next module.",
+    "   consistently from some block on passes every check. Consensus chooses between",
+    "   valid histories by the work behind them, so a rewrite costs as much work as the",
+    "   honest chain holds, until someone commands a majority of the hashing.",
   ];
 }
 
@@ -568,6 +576,8 @@ export function formatDemonstration(demonstration: Demonstration): string {
     ...formatBalanceProof(demonstration.balanceProof),
     "",
     ...formatScenarios(demonstration.scenarios),
+    "",
+    ...formatNetworkDemonstration(demonstration.network),
     "",
     ...formatSummary(demonstration.scenarios),
   ].join("\n");
