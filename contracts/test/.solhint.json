@@ -42,6 +42,7 @@
     "gas-increment-by-one": "off",
     "gas-indexed-events": "off",
     "gas-strict-inequalities": "off",
-    "reentrancy": "off"
+    "reentrancy": "off",
+    "no-console": "off"
   }
 }

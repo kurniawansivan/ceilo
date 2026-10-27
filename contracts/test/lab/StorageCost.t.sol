@@ -135,7 +135,7 @@ contract StorageCostTest is Test {
 
         lab.restoreEmptySlotAfterPadding(FRESH_SLOT, PADDING_WRITES);
 
-        assertEq(vm.lastCallGas().gasRefunded, int64(uint64(SSTORE_SET_GAS - WARM_STORAGE_READ_COST)));
+        assertEq(vm.lastFrameGas().gasRefunded, int64(uint64(SSTORE_SET_GAS - WARM_STORAGE_READ_COST)));
     }
 
     /// @notice A refund is capped at a fifth of the gas the call used, so a small call gets less than the rule gives.
@@ -143,7 +143,7 @@ contract StorageCostTest is Test {
         _coolSlot(FRESH_SLOT);
 
         lab.restoreEmptySlotAfterPadding(FRESH_SLOT, 0);
-        Vm.Gas memory gas = vm.lastCallGas();
+        Vm.Gas memory gas = vm.lastFrameGas();
 
         assertEq(gas.gasRefunded, int64(uint64(uint256(gas.gasTotalUsed) / MAX_REFUND_QUOTIENT)));
         assertLt(uint256(uint64(gas.gasRefunded)), SSTORE_SET_GAS - WARM_STORAGE_READ_COST);
@@ -166,7 +166,7 @@ contract StorageCostTest is Test {
 
         lab.measureStores(CLEAN_SLOT, 6, 6, ORIGINAL_VALUE);
 
-        assertEq(vm.lastCallGas().gasRefunded, int64(uint64(SSTORE_RESET_GAS - WARM_STORAGE_READ_COST)));
+        assertEq(vm.lastFrameGas().gasRefunded, int64(uint64(SSTORE_RESET_GAS - WARM_STORAGE_READ_COST)));
     }
 
     /// @notice Writing the value a slot already holds still pays the access: 100 warm, 2200 cold, with no refund.
@@ -178,7 +178,7 @@ contract StorageCostTest is Test {
 
         _assertCost(firstCost, WARM_STORAGE_READ_COST + COLD_SLOAD_COST);
         _assertCost(secondCost, WARM_STORAGE_READ_COST);
-        assertEq(vm.lastCallGas().gasRefunded, 0);
+        assertEq(vm.lastFrameGas().gasRefunded, 0);
     }
 
     /// @notice A write that changes nothing costs only the access, and a real change after it costs the reset alone.
@@ -201,7 +201,7 @@ contract StorageCostTest is Test {
 
         _assertCost(firstCost, SSTORE_RESET_GAS + COLD_SLOAD_COST);
         _assertCost(secondCost, WARM_STORAGE_READ_COST);
-        assertEq(vm.lastCallGas().gasRefunded, int64(uint64(SSTORE_CLEARS_SCHEDULE)));
+        assertEq(vm.lastFrameGas().gasRefunded, int64(uint64(SSTORE_CLEARS_SCHEDULE)));
     }
 
     /// @notice Transient storage costs 100 per write and per read, against 22100 for a first write to storage.
